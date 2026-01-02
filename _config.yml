@@ -104,3 +104,16 @@ deploy:
   type: 'git'
   repo: https://github.com/lingshichat/lingshichat.github.io.git
   branch: main
+
+# Markdown 渲染配置（使 Obsidian 和网页显示一致）
+marked:
+  # 启用 GitHub Flavored Markdown
+  gfm: true
+  # ✅ 单个回车换行（和 Obsidian 一致）
+  breaks: true
+  # 智能标点符号
+  smartypants: true
+  # 启用表格
+  tables: true
+  # 自动链接
+  autolink: true
