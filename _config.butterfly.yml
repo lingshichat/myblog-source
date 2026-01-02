@@ -1000,7 +1000,7 @@ pjax:
 
 # Inject the css and script (aplayer/meting)
 aplayerInject:
-  enable: false
+  enable: true
   per_page: true
 
 # Snackbar - Toast Notification
@@ -1085,8 +1085,7 @@ inject:
   bottom:
     # JS 脚本保持不变
     - '<script>var now=new Date();function createtime(){var t=new Date("01/01/2026 00:00:00");now.setTime(now.getTime()+250);var e=(now-t)/1e3/60/60/24,a=Math.floor(e),n=(e-a)*24,r=Math.floor(n),o=(n-r)*60,i=Math.floor(o),c=(o-i)*60,s=Math.round(c);String(r).length==1&&(r="0"+r),String(i).length==1&&(i="0"+i),String(s).length==1&&(s="0"+s);var g="本站已安全运行 "+a+" 天 "+r+" 小时 "+i+" 分 "+s+" 秒";document.getElementById("runtime_span")&&(document.getElementById("runtime_span").innerHTML=g)}setInterval(createtime,250);</script>'
-    # ------------------ 修复 PJAX 导致的音乐播放器不显示问题 ------------------
-    - '<script> document.addEventListener("pjax:complete", function() { if (document.querySelectorAll("meting-js").length > 0) { var meting = document.createElement("script"); meting.src = "https://unpkg.com/meting@2/dist/Meting.min.js"; document.body.appendChild(meting); } }); </script>'
+
 
 CDN:
   # The CDN provider for internal and third-party scripts
