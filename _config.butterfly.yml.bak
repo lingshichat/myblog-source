@@ -1067,26 +1067,9 @@ css_prefix: true
 # Insert the code to head (before '</head>' tag) and the bottom (before '</body>' tag)
 inject:
   head:
-    # ------------------ 基础样式 ------------------
-    - '<style> #site-subtitle { margin-top: 25px !important; } </style>'
-    - '<style> #footer { background: transparent !important; } </style>'
-    - '<style> .framework-info { display: none !important; } </style>'
     - '<link rel="stylesheet" href="/css/custom.css">'
-    # ------------------ 玻璃特效 (全站通用) ------------------
-    # - '<style> #nav { background: transparent !important; box-shadow: none !important; transition: background 0.3s; } #nav.fixed { background: rgba(0, 0, 0, 0.6) !important; backdrop-filter: blur(20px) !important; -webkit-backdrop-filter: blur(20px) !important; box-shadow: 0 5px 10px rgba(0,0,0,0.2) !important; } #nav * { color: #fff !important; text-shadow: 0 1px 2px rgba(0,0,0,0.3); } </style>'
-    # - '<style> #recent-posts > .recent-post-item, .layout > .recent-posts .recent-post-item, .layout > #post, .layout > #page, .card-widget { background: rgba(0, 0, 0, 0.5) !important; backdrop-filter: blur(20px) !important; -webkit-backdrop-filter: blur(20px) !important; border: 1px solid rgba(255, 255, 255, 0.08) !important; border-radius: 12px !important; } </style>'
-
-    # ------------------ 👇 重点修复战场！ ------------------
-    # 1. 强力修复作者卡片小字：直接点名 .headline 和 span，强制亮白 (#eee)
-    # 2. 数字部分：强制纯白加粗 (#fff)
-    # 3. Follow Me 按钮：保持之前的优化
-    # 4. 社交图标：强制变白
-    # - '<style> /* 全局文字美白 */ .card-widget, .recent-post-item, .layout > #post, .layout > #page { color: #eee !important; } .card-widget a, .recent-post-item a, .item-headline { color: #fff !important; } /* 🔥 重点修复这里：文章/标签/分类的标题 */ .card-widget .card-info-data-item .headline { color: #f0f0f0 !important; font-size: 14px !important; opacity: 0.9; } /* 数字部分 */ .card-widget .card-info-data-item .length-num { color: #ffffff !important; font-weight: bold !important; font-size: 18px !important; } /* Follow Me 按钮 */ #card-info-btn { background-color: #3b70fc !important; color: #fff !important; border: none !important; box-shadow: 0 4px 8px rgba(0,0,0,0.3); transition: all 0.3s; } #card-info-btn:hover { background-color: #6a9cff !important; box-shadow: 0 0 15px #3b70fc; transform: scale(1.05); } /* 社交图标 */ .card-info-social-icons .social-icon { color: #fff !important; } </style>'
   bottom:
-    # JS 脚本保持不变
-    - '<script>var now=new Date();function createtime(){var t=new Date("01/01/2026 00:00:00");now.setTime(now.getTime()+250);var e=(now-t)/1e3/60/60/24,a=Math.floor(e),n=(e-a)*24,r=Math.floor(n),o=(n-r)*60,i=Math.floor(o),c=(o-i)*60,s=Math.round(c);String(r).length==1&&(r="0"+r),String(i).length==1&&(i="0"+i),String(s).length==1&&(s="0"+s);var g="本站已安全运行 "+a+" 天 "+r+" 小时 "+i+" 分 "+s+" 秒";document.getElementById("runtime_span")&&(document.getElementById("runtime_span").innerHTML=g)}setInterval(createtime,250);</script>'
-    # ------------------ 修复 PJAX 导致的音乐播放器不显示问题 ------------------
-    - '<script> document.addEventListener("pjax:complete", function() { if (document.querySelectorAll("meting-js").length > 0) { var meting = document.createElement("script"); meting.src = "https://unpkg.com/meting@2/dist/Meting.min.js"; document.body.appendChild(meting); } }); </script>'
+    - '<script src="/js/custom.js"></script>'
 
 CDN:
   # The CDN provider for internal and third-party scripts

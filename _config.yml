@@ -117,3 +117,8 @@ marked:
   tables: true
   # 自动链接
   autolink: true
+
+# hexo-tag-aplayer 配置
+aplayer:
+  meting: true
+  asset_inject: true
