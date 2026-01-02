@@ -30,7 +30,7 @@ jobs:
     - name: 部署到 GitHub Pages
       uses: peaceiris/actions-gh-pages@v3
       with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
+        personal_token: ${{ secrets.DEPLOY_TOKEN }}
         publish_dir: ./public
         publish_branch: main
         external_repository: lingshichat/lingshichat.github.io
