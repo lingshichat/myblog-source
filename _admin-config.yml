@@ -1,0 +1,5 @@
+metadata:
+  username: admin
+  password_hash: 请在首次访问后台时设置密码
+  secret: hexo_admin_secret_key_2026
+deployCommand: 'git add . && git commit -m "后台更新" && git push'
