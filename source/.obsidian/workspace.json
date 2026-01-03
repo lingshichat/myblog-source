@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "_posts/music-test.md",
+                "file": "_posts/音乐使用说明.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "music-test"
+              "title": "音乐使用说明"
             }
           }
         ]
@@ -185,11 +185,11 @@
   },
   "active": "89e585255a079634",
   "lastOpenFiles": [
+    "_posts/笛月.md",
+    "_posts/music-test.md",
     "js/custom.js",
     "_posts/初次见面.md",
-    "_posts/笛月.md",
     "_posts/今日焕新.md",
-    "_posts/music-test.md",
     "templates/音乐-歌单.md",
     "templates/音乐-歌单-紫色.md",
     "templates/音乐-单曲.md",
