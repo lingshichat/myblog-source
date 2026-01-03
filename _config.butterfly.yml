@@ -206,7 +206,7 @@ toc:
   expand: false
   # Only for post
   style_simple: false
-  scroll_percent: true
+  scroll_percent: false
 
 post_copyright:
   enable: true

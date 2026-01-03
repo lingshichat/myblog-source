@@ -16,6 +16,10 @@ nav#nav
     if theme.menu
       != partial('includes/header/menu_item', {}, {cache: true})
 
+      #nav-music
+        a#nav-music-btn(onclick='return false;' title='播放/暂停背景音乐')
+          i.fas.fa-music
+
       #toggle-menu
         span.site-page
           i.fas.fa-bars.fa-fw
