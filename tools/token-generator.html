@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SKE - 安全令牌生成器</title>
+    <title>灵诗 Token 加密机</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
     <style>
         body {
@@ -15,94 +16,131 @@
             height: 100vh;
             margin: 0;
         }
+
         .card {
             background: white;
             padding: 2rem;
             border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            width: 400px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 400px;
         }
-        h2 { margin-top: 0; color: #333; }
-        .form-group { margin-bottom: 1rem; }
-        label { display: block; margin-bottom: 0.5rem; color: #666; }
+
+        h2 {
+            text-align: center;
+            color: #333;
+            margin-top: 0;
+        }
+
+        .input-group {
+            margin-bottom: 1rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #666;
+            font-size: 0.9rem;
+        }
+
         input {
             width: 100%;
             padding: 0.8rem;
             border: 1px solid #ddd;
             border-radius: 6px;
             box-sizing: border-box;
+            font-family: monospace;
         }
+
         button {
             width: 100%;
             padding: 0.8rem;
-            background: #007bff;
+            background: #3b70fc;
             color: white;
             border: none;
             border-radius: 6px;
-            cursor: pointer;
             font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.2s;
         }
-        button:hover { background: #0056b3; }
+
+        button:hover {
+            background: #2a5bd9;
+        }
+
         #result {
-            margin-top: 1rem;
+            margin-top: 1.5rem;
             padding: 1rem;
-            background: #e9ecef;
+            background: #f8f9fa;
             border-radius: 6px;
             word-break: break-all;
+            font-family: monospace;
+            font-size: 0.85rem;
             display: none;
+            cursor: pointer;
         }
-        .copy-btn {
-            background: #28a745;
-            margin-top: 0.5rem;
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            opacity: 0;
+            transition: opacity 0.3s;
         }
     </style>
 </head>
+
 <body>
     <div class="card">
-        <h2>🔐 令牌加密工具</h2>
-        <div class="form-group">
-            <label>GitHub Personal Access Token</label>
-            <input type="password" id="token" placeholder="ghp_xxxxxxxxxxxx">
+        <h2>🔑 Token 加密机</h2>
+        <div class="input-group">
+            <label>API Token (原文)</label>
+            <input type="text" id="token" placeholder="ghp_..., cloudflare_token...">
         </div>
-        <div class="form-group">
-            <label>设置访问密码 (Remember this!)</label>
-            <input type="text" id="password" placeholder="用于登录博客的密码">
+        <div class="input-group">
+            <label>加密密码 (Password)</label>
+            <input type="password" id="password" placeholder="用于登录 Admin 的密码">
         </div>
-        <button onclick="encryptToken()">生成加密串</button>
-        
-        <div id="result">
-            <label>加密结果 (请填入 source/editor/config.js)</label>
-            <div id="cipherText" style="font-family: monospace; color: #d63384;"></div>
-            <button class="copy-btn" onclick="copyResult()">复制结果</button>
-        </div>
+        <button onclick="encrypt()">🔒 加密并生成</button>
+        <div id="result" onclick="copyResult()" title="点击复制"></div>
     </div>
+    <div id="toast" class="toast">已复制到剪贴板</div>
 
     <script>
-        function encryptToken() {
+        function encrypt() {
             const token = document.getElementById('token').value.trim();
-            const password = document.getElementById('password').value.trim();
-            
+            const password = document.getElementById('password').value;
+            const resultDiv = document.getElementById('result');
+
             if (!token || !password) {
                 alert('请填写 Token 和 密码');
                 return;
             }
 
             try {
-                // 使用 AES 加密
                 const encrypted = CryptoJS.AES.encrypt(token, password).toString();
-                document.getElementById('cipherText').textContent = encrypted;
-                document.getElementById('result').style.display = 'block';
+                resultDiv.style.display = 'block';
+                resultDiv.textContent = encrypted;
             } catch (e) {
-                alert('加密失败: ' + e.message);
+                alert('加密失败');
+                console.error(e);
             }
         }
 
         function copyResult() {
-            const text = document.getElementById('cipherText').textContent;
+            const text = document.getElementById('result').textContent;
             navigator.clipboard.writeText(text).then(() => {
-                alert('已复制!');
+                const toast = document.getElementById('toast');
+                toast.style.opacity = '1';
+                setTimeout(() => toast.style.opacity = '0', 2000);
             });
         }
     </script>
 </body>
+
 </html>
