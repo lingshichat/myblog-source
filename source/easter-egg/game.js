@@ -186,17 +186,13 @@ class AchievementSystem {
         this.drawPixelTrophy(ctx, popupX + 12, popupY + 12, ach.icon === '👑' ? '#ffd700' : '#ffaa00');
 
         // 文字
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '8px "Press Start 2P", monospace';
-        ctx.fillText('成就解锁!', popupX + 60, popupY + 24);
-
         ctx.fillStyle = COLORS.neonCyan;
-        ctx.font = '14px "DotGothic16", sans-serif'; // 成就名称使用大字体 + 点阵中文字体
-        ctx.fillText(ach.name, popupX + 60, popupY + 40);
+        ctx.font = '16px "DotGothic16", sans-serif'; // 再放大一点名字
+        ctx.fillText(ach.name, popupX + 60, popupY + 30); // 居中调整
 
         ctx.fillStyle = '#aaaaaa';
         ctx.font = '10px "DotGothic16", sans-serif'; // 描述使用点阵中文字体
-        ctx.fillText(ach.desc, popupX + 60, popupY + 54);
+        ctx.fillText(ach.desc, popupX + 60, popupY + 48); // 居中调整
 
         ctx.restore();
     }
@@ -750,9 +746,7 @@ class NeonBot {
     constructor(canvasHeight, platformY) {
         this.config = {
             WIDTH: 20,
-            HEIGHT: 24,
-            WIDTH_DUCK: 28,
-            HEIGHT_DUCK: 16
+            HEIGHT: 24
         };
 
         // 使用平台Y坐标作为地面
@@ -763,7 +757,6 @@ class NeonBot {
 
         this.velocity = 0;
         this.jumping = false;
-        this.ducking = false;
         this.jumpCount = 0;
         this.falling = false; // 掉入缝隙
 
@@ -775,7 +768,6 @@ class NeonBot {
         this.yPos = this.groundYPos;
         this.velocity = 0;
         this.jumping = false;
-        this.ducking = false;
         this.jumpCount = 0;
         this.falling = false;
     }
@@ -805,7 +797,7 @@ class NeonBot {
             this.timer = 0;
         }
 
-        const currentHeight = this.ducking ? this.config.HEIGHT_DUCK : this.config.HEIGHT;
+        const currentHeight = this.config.HEIGHT;
 
         // 如果被墙挡住，游戏结束
         if (collisionInfo.blockedByWall) {
@@ -846,9 +838,10 @@ class NeonBot {
         return null; // 未死亡
     }
 
+    // 绘制bot
     draw(ctx) {
-        const w = this.ducking ? this.config.WIDTH_DUCK : this.config.WIDTH;
-        const h = this.ducking ? this.config.HEIGHT_DUCK : this.config.HEIGHT;
+        const w = this.config.WIDTH;
+        const h = this.config.HEIGHT;
         const x = this.xPos;
         const y = this.yPos;
 
@@ -856,47 +849,34 @@ class NeonBot {
         ctx.shadowBlur = 8;
         ctx.shadowColor = COLORS.neonCyan;
 
-        if (this.ducking) {
-            // 下蹲状态
-            ctx.fillStyle = COLORS.bodyGray;
-            ctx.fillRect(x, y, w, h);
-            // 面罩
-            ctx.fillStyle = COLORS.neonCyan;
-            ctx.fillRect(x + w - 10, y + 2, 8, 6);
-            // 喷气效果
-            ctx.fillStyle = COLORS.neonPink;
-            ctx.fillRect(x - 4, y + h / 2 - 2, 4, 4);
+        // 站立/跑步
+        // 身体
+        ctx.fillStyle = COLORS.bodyGray;
+        ctx.fillRect(x + 4, y + 8, 12, 12); // 躯干
+        // 头
+        ctx.fillRect(x + 2, y, 16, 10);
+        // 面罩
+        ctx.fillStyle = COLORS.neonCyan;
+        ctx.fillRect(x + 12, y + 2, 6, 6);
+
+        // 能量核心
+        ctx.fillStyle = COLORS.neonPink;
+        ctx.fillRect(x + 8, y + 12, 4, 4);
+
+        // 腿 (动画)
+        ctx.fillStyle = COLORS.bodyGray;
+        if (this.jumping) {
+            ctx.fillRect(x + 4, y + 20, 4, 4);
+            ctx.fillRect(x + 12, y + 20, 4, 4);
         } else {
-            // 站立/跑步
-            // 身体
-            ctx.fillStyle = COLORS.bodyGray;
-            ctx.fillRect(x + 4, y + 8, 12, 12); // 躯干
-            // 头
-            ctx.fillRect(x + 2, y, 16, 10);
-            // 面罩
-            ctx.fillStyle = COLORS.neonCyan;
-            ctx.fillRect(x + 12, y + 2, 6, 6);
-
-            // 能量核心
-            ctx.fillStyle = COLORS.neonPink;
-            ctx.fillRect(x + 8, y + 12, 4, 4);
-
-            // 腿 (动画)
-            ctx.fillStyle = COLORS.bodyGray;
-            if (this.jumping) {
-                ctx.fillRect(x + 4, y + 20, 4, 4);
-                ctx.fillRect(x + 12, y + 20, 4, 4);
+            if (this.frame === 0) {
+                ctx.fillRect(x + 4, y + 20, 4, 6);
+                ctx.fillRect(x + 12, y + 18, 4, 4);
             } else {
-                if (this.frame === 0) {
-                    ctx.fillRect(x + 4, y + 20, 4, 6);
-                    ctx.fillRect(x + 12, y + 18, 4, 4);
-                } else {
-                    ctx.fillRect(x + 4, y + 18, 4, 4);
-                    ctx.fillRect(x + 12, y + 20, 4, 6);
-                }
+                ctx.fillRect(x + 4, y + 18, 4, 4);
+                ctx.fillRect(x + 12, y + 20, 4, 6);
             }
         }
-
         ctx.shadowBlur = 0;
     }
 }
