@@ -1090,8 +1090,11 @@ inject:
     - <script src="/js/admin-portal.js"></script>
     - <script src="/js/runtime.js"></script>
     - <script src="/js/global-bgm.js"></script>
+    # 今日运势模块（侧边栏卡片）
+    - <script src="/js/daily-fortune.js"></script>
     # 拟物化流星雨脚本
     - <script src="/js/shooting_stars.js"></script>
+
 
 CDN:
   # The CDN provider for internal and third-party scripts
