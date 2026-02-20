@@ -2,6 +2,7 @@ import { CONFIG } from './config.js';
 import { Auth } from './auth.js';
 import { Octokit } from "https://esm.sh/@octokit/rest";
 import { Toast } from '../js/toast-module.js';
+import { s3Service } from './s3-service.js';
 
 
 new Vue({
@@ -45,6 +46,17 @@ new Vue({
             title: '',
             message: '',
             resolve: null
+        },
+
+        // 🖼️ 图床状态
+        imageGallery: {
+            show: false,
+            images: [],
+            selectedImage: null,
+            loading: false,
+            uploading: false,
+            uploadProgress: 0,
+            isDragging: false
         }
     },
     async mounted() {
@@ -249,6 +261,16 @@ new Vue({
                 toolbar: [
                     "bold", "italic", "heading", "quote", "unordered-list", "ordered-list",
                     "link", "image", "table",
+                    // 图床按钮
+                    {
+                        name: "image-gallery",
+                        action: () => {
+                            this.openImageGallery();
+                        },
+                        className: "fa fa-images no-disable",
+                        title: "图床",
+                    },
+                    "|",
                     // Custom Split Button
                     {
                         name: "side-by-side",
@@ -834,6 +856,153 @@ categories: ${catsStr}
 
         formatDate(str) {
             return str ? str.substring(0, 10) : '';
+        },
+
+        // 🖼️ 图床功能方法
+
+        // 打开图床模态框
+        async openImageGallery() {
+            if (!CONFIG.S3_CONFIG.accessKeyId || !CONFIG.S3_CONFIG.secretAccessKey) {
+                this.showAlert('S3 图床未配置，请先配置 config.js 中的 S3_CONFIG');
+                return;
+            }
+            
+            this.imageGallery.show = true;
+            this.imageGallery.selectedImage = null;
+            await this.loadGalleryImages();
+        },
+
+        // 关闭图床模态框
+        closeImageGallery() {
+            this.imageGallery.show = false;
+            this.imageGallery.selectedImage = null;
+            this.imageGallery.isDragging = false;
+        },
+
+        // 加载图床图片列表
+        async loadGalleryImages() {
+            this.imageGallery.loading = true;
+            try {
+                const images = await s3Service.listImages();
+                this.imageGallery.images = images;
+            } catch (error) {
+                console.error('加载图片列表失败:', error);
+                Toast.show('加载图片列表失败: ' + error.message, 'error');
+            } finally {
+                this.imageGallery.loading = false;
+            }
+        },
+
+        // 选择图片
+        selectImage(image) {
+            this.imageGallery.selectedImage = image;
+        },
+
+        // 触发文件选择
+        triggerFileInput() {
+            if (this.imageGallery.uploading) return;
+            this.$refs.fileInput.click();
+        },
+
+        // 处理文件选择
+        async handleFileSelect(event) {
+            const files = Array.from(event.target.files);
+            if (files.length > 0) {
+                await this.uploadFiles(files);
+            }
+            // 清空 input 以便再次选择相同文件
+            event.target.value = '';
+        },
+
+        // 处理拖拽文件
+        async handleDrop(event) {
+            this.imageGallery.isDragging = false;
+            const files = Array.from(event.dataTransfer.files).filter(file =>
+                file.type.startsWith('image/')
+            );
+            if (files.length > 0) {
+                await this.uploadFiles(files);
+            }
+        },
+
+        // 上传文件
+        async uploadFiles(files) {
+            if (this.imageGallery.uploading) return;
+            
+            this.imageGallery.uploading = true;
+            this.imageGallery.uploadProgress = 0;
+            
+            try {
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    
+                    // 检查文件类型
+                    if (!file.type.startsWith('image/')) {
+                        Toast.show(`${file.name} 不是图片文件，已跳过`, 'warning');
+                        continue;
+                    }
+                    
+                    // 检查文件大小 (最大 10MB)
+                    if (file.size > 10 * 1024 * 1024) {
+                        Toast.show(`${file.name} 超过 10MB 限制，已跳过`, 'warning');
+                        continue;
+                    }
+                    
+                    const result = await s3Service.uploadFile(file, (progress) => {
+                        this.imageGallery.uploadProgress = progress;
+                    });
+                    
+                    // 添加到列表开头
+                    this.imageGallery.images.unshift({
+                        key: result.key,
+                        name: result.name,
+                        size: result.size,
+                        url: result.url,
+                        thumbnailUrl: result.url,
+                        lastModified: new Date().toISOString()
+                    });
+                    
+                    Toast.show(`${file.name} 上传成功`, 'success');
+                }
+            } catch (error) {
+                console.error('上传失败:', error);
+                Toast.show('上传失败: ' + error.message, 'error');
+            } finally {
+                this.imageGallery.uploading = false;
+                this.imageGallery.uploadProgress = 0;
+            }
+        },
+
+        // 插入选中的图片到编辑器
+        insertSelectedImage() {
+            if (!this.imageGallery.selectedImage || !this.easyMDE) return;
+            
+            const image = this.imageGallery.selectedImage;
+            const cm = this.easyMDE.codemirror;
+            const cursor = cm.getCursor();
+            
+            // 生成 Markdown 图片语法
+            const imageMarkdown = `![${image.name}](${image.url})`;
+            
+            // 插入到光标位置
+            cm.replaceRange(imageMarkdown, cursor);
+            
+            // 关闭模态框
+            this.closeImageGallery();
+            
+            Toast.show('图片已插入', 'success');
+            
+            // 聚焦编辑器
+            cm.focus();
+        },
+
+        // 格式化文件大小
+        formatFileSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
     }
 });

@@ -255,6 +255,101 @@
                 </main>
             </div>
         </div>
+
+        <!-- 🖼️ 图床模态框 -->
+        <div id="image-gallery-modal" :class="{ visible: imageGallery.show }">
+            <div class="image-gallery-modal glass-modal">
+                <div class="modal-header">
+                    <h3>
+                        <i class="fa-solid fa-images" style="color: var(--primary-color);"></i>
+                        图床
+                        <span v-if="imageGallery.loading" class="gallery-loading">
+                            <i class="fa-solid fa-spinner fa-spin"></i>
+                        </span>
+                    </h3>
+                    <button class="modal-close-btn" @click="closeImageGallery">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+                
+                <div class="modal-body">
+                    <!-- 上传区域 -->
+                    <div
+                        class="upload-dropzone"
+                        :class="{ 'drag-over': imageGallery.isDragging, 'uploading': imageGallery.uploading }"
+                        @dragenter.prevent="imageGallery.isDragging = true"
+                        @dragleave.prevent="imageGallery.isDragging = false"
+                        @dragover.prevent
+                        @drop.prevent="handleDrop"
+                        @click="triggerFileInput"
+                    >
+                        <input
+                            type="file"
+                            ref="fileInput"
+                            style="display: none;"
+                            accept="image/*"
+                            multiple
+                            @change="handleFileSelect"
+                        >
+                        <div class="upload-content">
+                            <i class="fa-solid fa-cloud-arrow-up"></i>
+                            <p v-if="!imageGallery.uploading">
+                                拖拽图片到这里，或 <span>点击上传</span><br>
+                                <small>支持 JPG、PNG、GIF、WebP、SVG</small>
+                            </p>
+                            <div v-else class="upload-progress">
+                                <div class="progress-bar">
+                                    <div class="progress-fill" :style="{ width: imageGallery.uploadProgress + '%' }"></div>
+                                </div>
+                                <span>{{ imageGallery.uploadProgress }}%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 图片列表 -->
+                    <div class="gallery-content">
+                        <div v-if="imageGallery.images.length === 0 && !imageGallery.loading" class="gallery-empty">
+                            <i class="fa-regular fa-image"></i>
+                            <p>暂无图片</p>
+                            <small>上传第一张图片到图床吧</small>
+                        </div>
+                        
+                        <div v-else class="gallery-grid">
+                            <div
+                                v-for="image in imageGallery.images"
+                                :key="image.key"
+                                class="gallery-item"
+                                :class="{ selected: imageGallery.selectedImage?.key === image.key }"
+                                @click="selectImage(image)"
+                            >
+                                <div class="image-wrapper">
+                                    <img :src="image.thumbnailUrl" :alt="image.name" loading="lazy">
+                                </div>
+                                <div class="image-info">
+                                    <span class="image-name" :title="image.name">{{ image.name }}</span>
+                                    <span class="image-size">{{ formatFileSize(image.size) }}</span>
+                                </div>
+                                <div class="image-overlay">
+                                    <i class="fa-solid fa-check"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-actions">
+                    <button class="modal-btn modal-cancel-btn" @click="closeImageGallery">取消</button>
+                    <button
+                        class="modal-btn modal-confirm-btn"
+                        @click="insertSelectedImage"
+                        :disabled="!imageGallery.selectedImage || imageGallery.uploading"
+                    >
+                        <i class="fa-solid fa-plus"></i> 插入图片
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- 拟物化全局 Modal -->
         <div id="modal-container" :class="{ visible: modal.show }">
             <div class="glass-modal">

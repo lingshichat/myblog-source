@@ -38,7 +38,7 @@ body {
     padding: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     color: var(--text-primary);
-    background: url('/img/bg.jpg') no-repeat center center fixed;
+    background: url('../img/bg.jpg') no-repeat center center fixed;
     background-size: cover;
     height: 100vh;
     overflow: hidden;
@@ -2450,4 +2450,360 @@ span.flatpickr-weekday {
     /* In Zen mode, maybe a bit more visible or same */
     background: rgba(0, 0, 0, 0.2);
     /* Slightly darker bg for contrast */
+}
+
+/* =========================================
+   🖼️ 图床模态框样式
+   ========================================= */
+#image-gallery-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100vh;
+    z-index: 10000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(8px);
+}
+
+#image-gallery-modal.visible {
+    pointer-events: auto;
+    opacity: 1;
+}
+
+.image-gallery-modal {
+    width: 800px;
+    max-width: 90vw;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    background: rgba(10, 20, 40, 0.95);
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    padding: 0;
+    transform: scale(0.9) translateY(20px);
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    overflow: hidden;
+}
+
+#image-gallery-modal.visible .image-gallery-modal {
+    transform: scale(1) translateY(0);
+}
+
+.image-gallery-modal .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.image-gallery-modal .modal-header h3 {
+    margin: 0;
+    color: white;
+    font-size: 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.gallery-loading {
+    margin-left: 10px;
+    font-size: 0.9rem;
+    color: var(--primary-color);
+}
+
+.modal-close-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+
+.modal-close-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+    transform: rotate(90deg);
+}
+
+.image-gallery-modal .modal-body {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: 20px 24px;
+}
+
+/* 上传区域 */
+.upload-dropzone {
+    border: 2px dashed rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    padding: 30px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    background: rgba(255, 255, 255, 0.02);
+    margin-bottom: 20px;
+}
+
+.upload-dropzone:hover {
+    border-color: var(--primary-color);
+    background: rgba(59, 112, 252, 0.05);
+}
+
+.upload-dropzone.drag-over {
+    border-color: var(--primary-color);
+    background: rgba(59, 112, 252, 0.1);
+    transform: scale(1.02);
+}
+
+.upload-dropzone.uploading {
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.upload-content i {
+    font-size: 2.5rem;
+    color: rgba(255, 255, 255, 0.4);
+    margin-bottom: 12px;
+    transition: color 0.3s;
+}
+
+.upload-dropzone:hover .upload-content i {
+    color: var(--primary-color);
+}
+
+.upload-content p {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.95rem;
+    line-height: 1.6;
+}
+
+.upload-content p span {
+    color: var(--primary-color);
+    font-weight: 500;
+}
+
+.upload-content small {
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 0.8rem;
+}
+
+/* 上传进度 */
+.upload-progress {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    justify-content: center;
+}
+
+.progress-bar {
+    width: 200px;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--primary-gradient);
+    border-radius: 3px;
+    transition: width 0.1s linear;
+}
+
+.upload-progress span {
+    color: white;
+    font-size: 0.9rem;
+    font-weight: 500;
+    min-width: 40px;
+}
+
+/* 图片列表区域 */
+.gallery-content {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 200px;
+}
+
+.gallery-empty {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.4);
+    text-align: center;
+}
+
+.gallery-empty i {
+    font-size: 3rem;
+    margin-bottom: 15px;
+    opacity: 0.5;
+}
+
+.gallery-empty p {
+    margin: 0 0 8px 0;
+    font-size: 1.1rem;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.gallery-empty small {
+    font-size: 0.85rem;
+}
+
+/* 图片网格 */
+.gallery-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 15px;
+    padding: 5px;
+}
+
+.gallery-item {
+    position: relative;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.gallery-item:hover {
+    transform: translateY(-4px);
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+}
+
+.gallery-item.selected {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px var(--primary-color), 0 8px 25px rgba(59, 112, 252, 0.3);
+}
+
+.image-wrapper {
+    aspect-ratio: 1;
+    overflow: hidden;
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.image-wrapper img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.3s;
+}
+
+.gallery-item:hover .image-wrapper img {
+    transform: scale(1.05);
+}
+
+.image-info {
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.image-name {
+    display: block;
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.8);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 4px;
+}
+
+.image-size {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.4);
+}
+
+.image-overlay {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transform: scale(0);
+    transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.gallery-item.selected .image-overlay {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.image-overlay i {
+    color: white;
+    font-size: 0.8rem;
+}
+
+/* 模态框底部操作栏 */
+.image-gallery-modal .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 24px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.image-gallery-modal .modal-actions .modal-confirm-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+    .image-gallery-modal {
+        width: 100%;
+        max-width: 100%;
+        max-height: 90vh;
+        border-radius: 12px 12px 0 0;
+        margin: 0 10px;
+    }
+    
+    .gallery-grid {
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+        gap: 10px;
+    }
+    
+    .upload-dropzone {
+        padding: 20px;
+    }
+    
+    .upload-content i {
+        font-size: 2rem;
+    }
+    
+    .image-gallery-modal .modal-header,
+    .image-gallery-modal .modal-body,
+    .image-gallery-modal .modal-actions {
+        padding-left: 16px;
+        padding-right: 16px;
+    }
 }
