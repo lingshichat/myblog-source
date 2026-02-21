@@ -96,7 +96,8 @@ footer_img: false
 # Website Background
 # Can set it to color, image URL or an array containing colors and/or image URLs
 # If an array is provided, a random background will be selected from the array on each load
-background: https://lingshichat.s3.bitiful.net/img/blog/bg.jpg
+# 使用缤纷云 WebP 优化版，由 bg-loader-bitiful.js 接管渐进式加载
+background: https://lingshichat.s3.bitiful.net/img/blog/bg.jpg?format=webp&q=85&width=1920
 
 cover:
   # Disable the cover or not
@@ -1094,6 +1095,8 @@ inject:
     - <script src="/js/daily-fortune.js"></script>
     # 拟物化流星雨脚本
     - <script src="/js/shooting_stars.js"></script>
+    # 缤纷云背景图片渐进式加载器（必须在最前面加载）
+    - <script src="/js/bg-loader-bitiful.js"></script>
 
 
 CDN:

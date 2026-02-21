@@ -1857,3 +1857,58 @@
         font-size: 0.8rem;
     }
 }
+
+/* ==========================================================
+   缤纷云背景图片渐进式加载样式
+   ========================================================== */
+
+/* 隐藏 body 默认背景，由 JS 接管 */
+body {
+    background-image: none !important;
+}
+
+/* 确保背景图层正确显示 */
+#bg-blur,
+#bg-webp {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    background-size: cover !important;
+    background-position: center !important;
+    background-repeat: no-repeat !important;
+}
+
+/* 模糊层样式 */
+#bg-blur {
+    transform: scale(1.05) translateZ(0);
+    filter: blur(0);
+}
+
+/* WebP 清晰层 */
+#bg-webp {
+    transform: translateZ(0);
+    backface-visibility: hidden;
+}
+
+/* 页面内容层确保在背景之上 */
+#body-wrap {
+    position: relative;
+    z-index: 1;
+}
+
+/* 移动端优化 */
+@media (max-width: 768px) {
+    #bg-blur,
+    #bg-webp {
+        background-attachment: scroll !important;
+        background-size: cover !important;
+    }
+}
+
+/* 性能优化：减少重绘 */
+#bg-blur,
+#bg-webp {
+    contain: strict;
+}
