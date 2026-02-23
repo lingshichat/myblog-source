@@ -22,6 +22,7 @@ menu:
   归档: /archives/ || fas fa-archive
   分类: /categories/ || fas fa-folder-open
   标签: /tags/ || fas fa-tags
+  图床: /gallery/ || fas fa-images
 
 # --------------------------------------
 # Code Blocks Settings
