@@ -13,8 +13,11 @@ const CONFIG = {
     S3_REGION: 'cn-east-1',
     IMAGE_BASE_PREFIX: 'img/gallery/',
     THUMBNAIL_PARAMS: '?w=400&h=400&fit=cover&q=80&f=webp',
-    STORAGE_KEY: 'gallery_password',
-    ADMIN_KEY: 'gallery_admin_token',
+    SESSION_TOKEN_KEY: 'gallery_session_token',
+    SESSION_ROLE_KEY: 'gallery_session_role',
+    SESSION_USER_KEY: 'gallery_session_user',
+    SESSION_EMAIL_KEY: 'gallery_session_email',
+    SESSION_EXPIRES_KEY: 'gallery_session_expires',
     OPEN_MODE: true
 };
 
@@ -32,81 +35,155 @@ const UPLOAD_CATEGORIES = CATEGORIES.filter(c => c.key !== 'all');
 // 图片列表服务
 // ============================================
 const GalleryService = {
-    async listImages(prefix = '') {
+    async listImages(prefix = '', token = '') {
         const fullPrefix = prefix ? `${CONFIG.IMAGE_BASE_PREFIX}${prefix}` : CONFIG.IMAGE_BASE_PREFIX;
-        const url = `${CONFIG.WORKER_URL}?action=list&prefix=${encodeURIComponent(fullPrefix)}`;
-        
-        const response = await fetch(url);
-        const data = await response.json();
-        
-        if (data.code !== 200) {
-            throw new Error(data.message || '获取图片列表失败');
+        const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+        let cursor = '';
+        let pageCount = 0;
+        const maxPages = 50;
+        const merged = [];
+
+        while (pageCount < maxPages) {
+            const params = new URLSearchParams({
+                action: 'list',
+                prefix: fullPrefix,
+                limit: '100'
+            });
+            if (cursor) {
+                params.set('cursor', cursor);
+            }
+
+            const response = await fetch(`${CONFIG.WORKER_URL}?${params.toString()}`, { headers });
+            const data = await response.json();
+
+            if (data.code !== 200) {
+                const err = new Error(data.message || '获取图片列表失败');
+                err.code = data.code;
+                throw err;
+            }
+
+            const currentPage = Array.isArray(data.images) ? data.images : [];
+            merged.push(...currentPage);
+
+            const pagination = data.pagination || {};
+            if (!pagination.hasMore || !pagination.nextCursor) {
+                break;
+            }
+
+            cursor = pagination.nextCursor;
+            pageCount += 1;
         }
-        
-        return data.images;
+
+        return merged;
     },
 
-    async updateMetadata(key, title, tags, adminToken) {
+    async login(email, password) {
+        const response = await fetch(`${CONFIG.WORKER_URL}?action=login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
+        const data = await response.json();
+        if (data.code !== 200 || !data.data?.token) {
+            const err = new Error(data.message || '登录失败');
+            err.code = data.code;
+            throw err;
+        }
+        return data.data;
+    },
+
+    async register(email, password) {
+        const response = await fetch(`${CONFIG.WORKER_URL}?action=register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
+        const data = await response.json();
+        if (data.code !== 200) {
+            const err = new Error(data.message || '注册失败');
+            err.code = data.code;
+            throw err;
+        }
+        return data;
+    },
+
+    async logout(token) {
+        const response = await fetch(`${CONFIG.WORKER_URL}?action=logout`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        const data = await response.json();
+        if (data.code !== 200) {
+            const err = new Error(data.message || '退出失败');
+            err.code = data.code;
+            throw err;
+        }
+        return data;
+    },
+
+    async updateMetadata(key, title, tags, token, expectedVersion = null) {
+        const payload = { key, title, tags };
+        if (expectedVersion !== null && expectedVersion !== undefined) {
+            payload.expectedVersion = expectedVersion;
+        }
+
         const response = await fetch(`${CONFIG.WORKER_URL}?action=updateMeta`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${adminToken}`
+                'Authorization': `Bearer ${token}`
             },
-            body: JSON.stringify({ key, title, tags })
+            body: JSON.stringify(payload)
         });
-        
+
         const data = await response.json();
         if (data.code !== 200) {
-            throw new Error(data.message || '更新元数据失败');
+            const err = new Error(data.message || '更新元数据失败');
+            err.code = data.code;
+            err.currentVersion = data.currentVersion;
+            err.latestMetadata = data.metadata;
+            throw err;
         }
         return data.metadata;
     },
 
-    async moveImage(oldKey, newKey, adminToken) {
+    async moveImage(oldKey, newKey, token) {
         const response = await fetch(`${CONFIG.WORKER_URL}?action=moveImage`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${adminToken}`
+                'Authorization': `Bearer ${token}`
             },
             body: JSON.stringify({ oldKey, newKey })
         });
-        
+
         const data = await response.json();
         if (data.code !== 200) {
-            throw new Error(data.message || '移动图片失败');
+            const err = new Error(data.message || '移动图片失败');
+            err.code = data.code;
+            throw err;
         }
         return data;
     },
 
-    async deleteImage(key, adminToken) {
+    async deleteImage(key, token) {
         const response = await fetch(`${CONFIG.WORKER_URL}?action=deleteImage&key=${encodeURIComponent(key)}`, {
             method: 'DELETE',
             headers: {
-                'Authorization': `Bearer ${adminToken}`
+                'Authorization': `Bearer ${token}`
             }
         });
-        
+
         const data = await response.json();
         if (data.code !== 200) {
-            throw new Error(data.message || '删除图片失败');
+            const err = new Error(data.message || '删除图片失败');
+            err.code = data.code;
+            throw err;
         }
         return data;
-    },
-
-    async verifyAdmin(password) {
-        // 简单验证：尝试调用一个需要权限的接口
-        try {
-            const response = await fetch(`${CONFIG.WORKER_URL}?action=getMeta`, {
-                headers: {
-                    'Authorization': `Bearer ${password}`
-                }
-            });
-            return response.ok;
-        } catch {
-            return false;
-        }
     }
 };
 
@@ -116,22 +193,19 @@ const GalleryService = {
 new Vue({
     el: '#app',
     data: {
-        isUnlocked: false,
-        password: '',
-        rememberMe: true,
+        isUnlocked: true,
         loading: false,
-        errorMsg: '',
-        
+
         categories: CATEGORIES,
         uploadCategories: UPLOAD_CATEGORIES,
         currentCategory: 'all',
         categoryCounts: {},
-        
+
         images: [],
         allImages: {},
-        
+
         isDragging: false,
-        
+
         showUploadModal: false,
         uploadFiles: [],
         uploadTitle: '',
@@ -141,13 +215,19 @@ new Vue({
         uploading: false,
         uploadProgress: 0,
         uploadFileName: '',
-        
-        // 管理功能
-        isAdminMode: false,
-        showAdminLogin: false,
-        adminPassword: '',
-        adminError: '',
-        adminToken: localStorage.getItem(CONFIG.ADMIN_KEY) || '',
+
+        // 认证与权限
+        showAuthModal: false,
+        authMode: 'login',
+        authEmail: '',
+        authPassword: '',
+        authError: '',
+        authSubmitting: false,
+        sessionToken: localStorage.getItem(CONFIG.SESSION_TOKEN_KEY) || '',
+        sessionRole: localStorage.getItem(CONFIG.SESSION_ROLE_KEY) || '',
+        sessionUserId: localStorage.getItem(CONFIG.SESSION_USER_KEY) || '',
+        sessionEmail: localStorage.getItem(CONFIG.SESSION_EMAIL_KEY) || '',
+        sessionExpiresAt: localStorage.getItem(CONFIG.SESSION_EXPIRES_KEY) || '',
         
         // 编辑功能
         showEditModal: false,
@@ -166,15 +246,17 @@ new Vue({
     },
     
     mounted() {
-        this.checkSavedPassword();
+        this.restoreSession();
         this.$nextTick(() => {
             this.initFancybox();
         });
         document.addEventListener('paste', this.handlePaste);
+        window.addEventListener('storage', this.handleStorageChange);
     },
     
     beforeDestroy() {
         document.removeEventListener('paste', this.handlePaste);
+        window.removeEventListener('storage', this.handleStorageChange);
     },
     
     watch: {
@@ -190,125 +272,148 @@ new Vue({
         // 认证相关
         // ============================================
         
-        checkSavedPassword() {
-            if (CONFIG.OPEN_MODE) {
-                this.isUnlocked = true;
-                this.loadAllCategories();
-                return;
-            }
-            
-            const saved = localStorage.getItem(CONFIG.STORAGE_KEY);
-            if (saved) {
-                this.password = saved;
-                this.unlock();
-            }
-        },
-        
-        unlock() {
-            if (!this.password.trim()) {
-                this.errorMsg = '请输入访问密钥';
-                return;
-            }
-            
-            this.loading = true;
-            this.errorMsg = '';
-            
-            if (this.rememberMe) {
-                localStorage.setItem(CONFIG.STORAGE_KEY, this.password);
-            }
-            
-            this.verifyPassword()
-                .then(valid => {
-                    if (valid) {
-                        this.isUnlocked = true;
-                        this.loadAllCategories();
-                    } else {
-                        this.errorMsg = '密钥错误，请重试';
-                        localStorage.removeItem(CONFIG.STORAGE_KEY);
-                    }
-                })
-                .catch(err => {
-                    this.errorMsg = '验证失败: ' + err.message;
-                })
-                .finally(() => {
-                    this.loading = false;
-                });
-        },
-        
-        async verifyPassword() {
-            try {
-                const response = await fetch(`${CONFIG.WORKER_URL}?key=test`, {
-                    headers: {
-                        'Authorization': `Bearer ${this.password}`
-                    }
-                });
-                
-                const data = await response.json();
-                return data.code !== 401;
-            } catch (error) {
-                console.error('验证密码时出错:', error);
-                return true;
-            }
-        },
-        
-        logout() {
-            this.isUnlocked = false;
-            this.password = '';
-            this.images = [];
-            this.allImages = {};
-            this.isAdminMode = false;
-            this.adminToken = '';
-            localStorage.removeItem(CONFIG.STORAGE_KEY);
-            localStorage.removeItem(CONFIG.ADMIN_KEY);
-        },
-        
-        // ============================================
-        // 管理模式
-        // ============================================
-        
-        toggleAdminMode() {
-            if (this.isAdminMode) {
-                // 退出管理
-                this.isAdminMode = false;
-                this.showToast('已退出管理模式', 'success');
-            } else {
-                // 进入管理 - 检查是否有 token
-                if (this.adminToken) {
-                    this.isAdminMode = true;
-                    this.showToast('已进入管理模式', 'success');
-                } else {
-                    this.showAdminLogin = true;
-                    this.adminPassword = '';
-                    this.adminError = '';
+        restoreSession() {
+            if (!this.sessionToken) return;
+            if (this.sessionExpiresAt) {
+                const expiresTs = new Date(this.sessionExpiresAt).getTime();
+                if (Number.isFinite(expiresTs) && expiresTs <= Date.now()) {
+                    this.clearSession();
+                    return;
                 }
             }
         },
-        
-        async loginAdmin() {
-            if (!this.adminPassword) return;
-            
-            const isValid = await GalleryService.verifyAdmin(this.adminPassword);
-            
-            if (isValid) {
-                this.adminToken = this.adminPassword;
-                localStorage.setItem(CONFIG.ADMIN_KEY, this.adminToken);
-                this.isAdminMode = true;
-                this.showAdminLogin = false;
-                this.showToast('管理员验证成功', 'success');
-            } else {
-                this.adminError = '密码错误';
+
+        setSession(session) {
+            this.sessionToken = session.token;
+            this.sessionRole = session.role;
+            this.sessionUserId = session.userId || session.ownerId || '';
+            this.sessionEmail = session.email || '';
+            this.sessionExpiresAt = session.expiresAt;
+            localStorage.setItem(CONFIG.SESSION_TOKEN_KEY, this.sessionToken);
+            localStorage.setItem(CONFIG.SESSION_ROLE_KEY, this.sessionRole);
+            localStorage.setItem(CONFIG.SESSION_USER_KEY, this.sessionUserId);
+            localStorage.setItem(CONFIG.SESSION_EMAIL_KEY, this.sessionEmail);
+            localStorage.setItem(CONFIG.SESSION_EXPIRES_KEY, this.sessionExpiresAt);
+        },
+
+        clearSession() {
+            this.sessionToken = '';
+            this.sessionRole = '';
+            this.sessionUserId = '';
+            this.sessionEmail = '';
+            this.sessionExpiresAt = '';
+            localStorage.removeItem(CONFIG.SESSION_TOKEN_KEY);
+            localStorage.removeItem(CONFIG.SESSION_ROLE_KEY);
+            localStorage.removeItem(CONFIG.SESSION_USER_KEY);
+            localStorage.removeItem(CONFIG.SESSION_EMAIL_KEY);
+            localStorage.removeItem(CONFIG.SESSION_EXPIRES_KEY);
+        },
+
+        ensureSession(requiredRole = null) {
+            if (!this.sessionToken) {
+                return false;
             }
+            if (this.sessionExpiresAt) {
+                const expiresTs = new Date(this.sessionExpiresAt).getTime();
+                if (Number.isFinite(expiresTs) && expiresTs <= Date.now()) {
+                    this.clearSession();
+                    this.showToast('登录状态已过期，请重新登录', 'error');
+                    return false;
+                }
+            }
+            if (requiredRole && this.sessionRole !== requiredRole) {
+                return false;
+            }
+            return true;
+        },
+
+        handleStorageChange(event) {
+            const keys = [
+                CONFIG.SESSION_TOKEN_KEY,
+                CONFIG.SESSION_ROLE_KEY,
+                CONFIG.SESSION_USER_KEY,
+                CONFIG.SESSION_EMAIL_KEY,
+                CONFIG.SESSION_EXPIRES_KEY
+            ];
+            if (!keys.includes(event.key)) {
+                return;
+            }
+
+            this.sessionToken = localStorage.getItem(CONFIG.SESSION_TOKEN_KEY) || '';
+            this.sessionRole = localStorage.getItem(CONFIG.SESSION_ROLE_KEY) || '';
+            this.sessionUserId = localStorage.getItem(CONFIG.SESSION_USER_KEY) || '';
+            this.sessionEmail = localStorage.getItem(CONFIG.SESSION_EMAIL_KEY) || '';
+            this.sessionExpiresAt = localStorage.getItem(CONFIG.SESSION_EXPIRES_KEY) || '';
+            this.restoreSession();
+        },
+
+        openAuthModal(mode = 'login', message = '') {
+            this.authMode = mode;
+            this.authPassword = '';
+            this.authError = message;
+            this.showAuthModal = true;
+        },
+
+        async submitAuth() {
+            if (!this.authEmail.trim() || !this.authPassword) {
+                this.authError = '请输入邮箱和密码';
+                return;
+            }
+
+            this.authSubmitting = true;
+            this.authError = '';
+            try {
+                if (this.authMode === 'register') {
+                    await GalleryService.register(this.authEmail, this.authPassword);
+                }
+                const session = await GalleryService.login(this.authEmail, this.authPassword);
+                this.setSession(session);
+                this.showAuthModal = false;
+                this.showToast(this.authMode === 'register' ? '注册并登录成功' : '登录成功', 'success');
+            } catch (error) {
+                this.authError = error.message || '认证失败';
+            } finally {
+                this.authSubmitting = false;
+            }
+        },
+
+        async logout() {
+            const token = this.getReadableSessionToken();
+            if (token) {
+                try {
+                    await GalleryService.logout(token);
+                } catch (error) {
+                    console.warn('退出登录请求失败:', error);
+                }
+            }
+            this.clearSession();
+            this.showToast('已退出登录', 'success');
         },
         
         // ============================================
         // 分类相关
         // ============================================
         
+        getReadableSessionToken() {
+            if (!this.sessionToken) {
+                return '';
+            }
+            if (this.sessionExpiresAt) {
+                const expiresTs = new Date(this.sessionExpiresAt).getTime();
+                if (Number.isFinite(expiresTs) && expiresTs <= Date.now()) {
+                    this.clearSession();
+                    return '';
+                }
+            }
+            return this.sessionToken;
+        },
+
         async loadAllCategories() {
             this.loading = true;
             
             try {
-                const allImages = await GalleryService.listImages('');
+                const listToken = this.getReadableSessionToken();
+                const allImages = await GalleryService.listImages('', listToken);
                 this.allImages['all'] = allImages;
                 this.images = allImages;
                 this.$set(this.categoryCounts, 'all', allImages.length);
@@ -324,9 +429,10 @@ new Vue({
         },
         
         async loadCategoryCounts() {
+            const listToken = this.getReadableSessionToken();
             for (const cat of UPLOAD_CATEGORIES) {
                 try {
-                    const images = await GalleryService.listImages(cat.prefix);
+                    const images = await GalleryService.listImages(cat.prefix, listToken);
                     this.allImages[cat.key] = images;
                     this.$set(this.categoryCounts, cat.key, images.length);
                 } catch (e) {
@@ -346,7 +452,8 @@ new Vue({
                     this.images = this.allImages[categoryKey];
                 } else {
                     const cat = CATEGORIES.find(c => c.key === categoryKey);
-                    const images = await GalleryService.listImages(cat.prefix);
+                    const listToken = this.getReadableSessionToken();
+                    const images = await GalleryService.listImages(cat.prefix, listToken);
                     this.allImages[categoryKey] = images;
                     this.images = images;
                 }
@@ -372,6 +479,11 @@ new Vue({
         },
         
         handleFileSelect(event) {
+            if (!this.ensureSession()) {
+                this.openAuthModal('login', '登录后可上传图片');
+                event.target.value = '';
+                return;
+            }
             const files = Array.from(event.target.files);
             this.addFiles(files);
             event.target.value = '';
@@ -379,17 +491,26 @@ new Vue({
         
         handleDrop(event) {
             this.isDragging = false;
+            if (!this.ensureSession()) {
+                this.openAuthModal('login', '登录后可上传图片');
+                return;
+            }
             const files = Array.from(event.dataTransfer.files);
             this.addFiles(files);
         },
         
         handleModalDrop(event) {
+            if (!this.ensureSession()) {
+                this.openAuthModal('login', '登录后可上传图片');
+                return;
+            }
             const files = Array.from(event.dataTransfer.files).filter(f => f.type.startsWith('image/'));
             this.addFiles(files);
         },
         
         handlePaste(event) {
             if (!this.isUnlocked) return;
+            if (!this.ensureSession()) return;
             
             const items = event.clipboardData?.items;
             if (!items) return;
@@ -442,6 +563,10 @@ new Vue({
         
         async startUpload() {
             if (this.uploadFiles.length === 0) return;
+            if (!this.ensureSession()) {
+                this.openAuthModal('login', '登录后可上传图片');
+                return;
+            }
             
             const uploadFileCount = this.uploadFiles.length;
             this.showUploadModal = false;
@@ -465,7 +590,22 @@ new Vue({
                     successCount++;
                 } catch (error) {
                     console.error('上传失败:', error);
-                    this.showToast(`上传 ${file.name} 失败: ${error.message}`, 'error');
+                    if (error?.code === 401) {
+                        this.clearSession();
+                        this.openAuthModal('login', '登录已失效，请重新登录后上传');
+                        this.showToast('登录已失效，请重新登录后再上传', 'error');
+                        break;
+                    }
+                    if (error?.code === 403) {
+                        this.openAuthModal('login', '当前账号无上传权限');
+                        this.showToast('当前身份无上传权限，请重新登录', 'error');
+                        break;
+                    }
+                    if (error?.code === 429) {
+                        this.showToast(`上传 ${file.name} 失败: 请求过于频繁，请稍后重试`, 'error');
+                    } else {
+                        this.showToast(`上传 ${file.name} 失败: ${error.message}`, 'error');
+                    }
                 }
             }
             
@@ -489,26 +629,46 @@ new Vue({
             const key = `${CONFIG.IMAGE_BASE_PREFIX}${categoryPrefix}${filename}`;
             
             // 获取上传签名
-            const signResponse = await fetch(`${CONFIG.WORKER_URL}?action=sign&key=${encodeURIComponent(key)}&type=${encodeURIComponent(file.type)}`);
+            if (!this.ensureSession()) {
+                this.openAuthModal('login', '请先登录后上传');
+                throw new Error('请先登录账号');
+            }
+
+            const signResponse = await fetch(`${CONFIG.WORKER_URL}?action=sign`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.sessionToken}`
+                },
+                body: JSON.stringify({
+                    key,
+                    contentType: file.type,
+                    sizeBytes: file.size
+                })
+            });
             const signData = await signResponse.json();
             
             if (signData.code !== 200) {
-                throw new Error(signData.message || '获取签名失败');
+                const signError = new Error(signData.message || '获取签名失败');
+                signError.code = signData.code;
+                throw signError;
             }
             
             // 上传到 S3
             await this.uploadToS3(signData.url, signData.headers, file);
-            
+
+            const effectiveKey = signData.key || key;
+
             // 保存元数据（如果有标题或标签）
             if (this.uploadTitle || this.uploadTags.length > 0) {
                 try {
                     // 使用第一个文件的标题和标签给所有文件（简化处理）
                     // 实际应该为每个文件单独设置
                     await GalleryService.updateMetadata(
-                        key, 
+                        effectiveKey,
                         this.uploadTitle || file.name,
                         this.uploadTags,
-                        this.adminToken || 'anonymous'
+                        this.sessionToken
                     );
                 } catch (e) {
                     console.warn('保存元数据失败:', e);
@@ -552,6 +712,12 @@ new Vue({
         // ============================================
         
         openEditModal(image) {
+            if (!this.ensureSession('admin')) {
+                this.showToast('仅管理员可编辑图片', 'error');
+                this.openAuthModal('login', '请使用管理员账号登录');
+                return;
+            }
+
             this.editingImage = image;
             this.editTitle = image.title || '';
             this.editTags = image.tags ? [...image.tags] : [];
@@ -589,11 +755,16 @@ new Vue({
             
             try {
                 // 更新元数据
+                if (!this.ensureSession('admin')) {
+                    throw new Error('仅管理员可编辑图片');
+                }
+
                 await GalleryService.updateMetadata(
                     this.editingImage.key,
                     this.editTitle,
                     this.editTags,
-                    this.adminToken
+                    this.sessionToken,
+                    Number.isFinite(this.editingImage.version) ? this.editingImage.version : null
                 );
                 
                 // 如果需要移动分类
@@ -605,7 +776,7 @@ new Vue({
                 const newKey = `${CONFIG.IMAGE_BASE_PREFIX}${currentPrefix}${filename}`;
                 
                 if (oldKey !== newKey) {
-                    await GalleryService.moveImage(oldKey, newKey, this.adminToken);
+                    await GalleryService.moveImage(oldKey, newKey, this.sessionToken);
                     this.showToast('图片已移动到 ' + currentCat.name, 'success');
                 } else {
                     this.showToast('保存成功！', 'success');
@@ -616,7 +787,26 @@ new Vue({
                 
             } catch (error) {
                 console.error('保存失败:', error);
-                this.showToast('保存失败: ' + error.message, 'error');
+                if (error?.code === 409) {
+                    this.showToast('保存冲突：图片元数据已被其他会话修改，已为你刷新列表', 'error');
+                    this.showEditModal = false;
+                    await this.loadImages();
+                } else if (error?.code === 401) {
+                    this.clearSession();
+                    this.openAuthModal('login', '登录已失效，请重新登录');
+                    this.showToast('登录已失效，请重新登录', 'error');
+                } else if (error?.code === 403) {
+                    this.openAuthModal('login', '无管理员权限，请切换账号');
+                    this.showToast('无管理员权限，无法编辑图片', 'error');
+                } else if (error?.code === 404) {
+                    this.showToast('图片不存在或已被删除，已为你刷新列表', 'error');
+                    this.showEditModal = false;
+                    await this.loadImages();
+                } else if (error?.code === 429) {
+                    this.showToast('操作过于频繁，请稍后重试', 'error');
+                } else {
+                    this.showToast('保存失败: ' + error.message, 'error');
+                }
             } finally {
                 this.savingEdit = false;
             }
@@ -627,6 +817,12 @@ new Vue({
         // ============================================
         
         confirmDelete(image) {
+            if (!this.ensureSession('admin')) {
+                this.showToast('仅管理员可删除图片', 'error');
+                this.openAuthModal('login', '请使用管理员账号登录');
+                return;
+            }
+
             if (confirm(`确定要删除 "${image.title || image.name}" 吗？此操作不可恢复。`)) {
                 this.deleteImage(image);
             }
@@ -634,12 +830,29 @@ new Vue({
         
         async deleteImage(image) {
             try {
-                await GalleryService.deleteImage(image.key, this.adminToken);
+                if (!this.ensureSession('admin')) {
+                    throw new Error('仅管理员可删除图片');
+                }
+                await GalleryService.deleteImage(image.key, this.sessionToken);
                 this.showToast('图片已删除', 'success');
                 await this.loadImages();
             } catch (error) {
                 console.error('删除失败:', error);
-                this.showToast('删除失败: ' + error.message, 'error');
+                if (error?.code === 401) {
+                    this.clearSession();
+                    this.openAuthModal('login', '登录已失效，请重新登录');
+                    this.showToast('登录已失效，请重新登录', 'error');
+                } else if (error?.code === 403) {
+                    this.openAuthModal('login', '无管理员权限，请切换账号');
+                    this.showToast('无管理员权限，无法删除图片', 'error');
+                } else if (error?.code === 404) {
+                    this.showToast('图片不存在或已被删除，正在刷新列表', 'error');
+                    await this.loadImages();
+                } else if (error?.code === 429) {
+                    this.showToast('请求过于频繁，请稍后再试', 'error');
+                } else {
+                    this.showToast('删除失败: ' + error.message, 'error');
+                }
             }
         },
         

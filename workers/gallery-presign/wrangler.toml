@@ -2,18 +2,82 @@ name = "gallery-presign"
 main = "worker.js"
 compatibility_date = "2024-01-01"
 
-# 环境变量 (敏感信息请使用 wrangler secret put 命令设置)
-# wrangler secret put UPLOAD_PASSWORD
-# wrangler secret put S3_ACCESS_KEY
-# wrangler secret put S3_SECRET_KEY
+# 默认启用 workers.dev 便于灰度验证
+workers_dev = true
 
-# 公开配置 (可在此设置或通过 Dashboard)
+# =============================
+# Secret 配置（命令行注入）
+# =============================
+# 基础（两个环境都要配置）
+# wrangler secret put SESSION_SECRET --env staging
+# wrangler secret put SESSION_SECRET --env production
+# wrangler secret put ADMIN_PASSWORD --env staging
+# wrangler secret put ADMIN_PASSWORD --env production
+# wrangler secret put VISITOR_PASSWORD --env staging
+# wrangler secret put VISITOR_PASSWORD --env production
+# wrangler secret put S3_ACCESS_KEY --env staging
+# wrangler secret put S3_ACCESS_KEY --env production
+# wrangler secret put S3_SECRET_KEY --env staging
+# wrangler secret put S3_SECRET_KEY --env production
+
+# 兼容旧变量（如仍使用 UPLOAD_PASSWORD）
+# wrangler secret put UPLOAD_PASSWORD --env staging
+# wrangler secret put UPLOAD_PASSWORD --env production
+
+# =============================
+# 默认环境（本地开发 / workers.dev）
+# =============================
 [vars]
 S3_ENDPOINT = "https://s3.bitiful.net"
 S3_REGION = "cn-east-1"
 S3_BUCKET = "lingshichat"
 
-# 路由配置 (根据您的域名修改)
-# routes = [
-#   { pattern = "gallery.yourdomain.com/api/*", zone_name = "yourdomain.com" }
-# ]
+# D1 数据库绑定（本地/默认）
+# 创建后填入数据库 ID：wrangler d1 create gallery_auth
+[[d1_databases]]
+binding = "DB"
+database_name = "gallery_auth"
+database_id = ""
+
+# =============================
+# Staging 灰度环境
+# =============================
+[env.staging]
+name = "gallery-presign-staging"
+workers_dev = true
+
+[env.staging.vars]
+S3_ENDPOINT = "https://s3.bitiful.net"
+S3_REGION = "cn-east-1"
+S3_BUCKET = "lingshichat"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "gallery_auth_staging"
+database_id = ""
+
+# [env.staging.routes]
+# pattern = "staging-gallery-api.yourdomain.com/*"
+# zone_name = "yourdomain.com"
+
+# =============================
+# Production 正式环境
+# =============================
+[env.production]
+name = "gallery-presign"
+workers_dev = true
+
+[env.production.vars]
+S3_ENDPOINT = "https://s3.bitiful.net"
+S3_REGION = "cn-east-1"
+S3_BUCKET = "lingshichat"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "gallery_auth"
+database_id = ""
+
+# 建议正式环境改为自定义域路由，避免直接暴露 workers.dev
+# [env.production.routes]
+# pattern = "gallery-api.yourdomain.com/*"
+# zone_name = "yourdomain.com"

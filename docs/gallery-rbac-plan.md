@@ -1,24 +1,25 @@
-# 图床三层权限与低维护演进方案
+# 图床权限与会话演进方案（D1 账号体系）
 
 > 适用项目：泠诗图床（Gallery & Uploader）
-> 
-> 目标：在不引入完整账号系统的前提下，实现三层权限与可持续演进
+>
+> 目标：以低维护成本实现 `public / user / admin` 三层权限，并完成从旧口令模式到邮箱账号+会话模式的迁移。
 
 ---
 
-## 1. 产品定位
+## 1. 产品定位与边界
 
 图床定位为：
 
-- 公开端：类似 Pixiv 的美图鉴赏页面，只读浏览
-- 访客端：输入访客口令后可上传，并且仅能管理自己上传的图片
-- 管理端：输入管理员口令后可管理全部图片
+- 公开端（public）：只读浏览
+- 用户端（user）：登录后可上传与管理本人资源
+- 管理端（admin）：可管理全部资源
 
 核心原则：
 
-1. 不做注册登录与找回密码，避免维护成本
-2. 权限判断在 Worker 后端完成，前端仅做界面引导
-3. 先建立安全基线，再做体验增强
+1. 账号与会话走 D1，图片与图片元数据继续走 S3
+2. 权限判定在 Worker 后端完成，前端仅做可见性引导
+3. 会话固定有效期，不做心跳续期、不做每请求续期写库
+4. 优先保证安全基线，再扩展体验能力
 
 ---
 
@@ -26,246 +27,300 @@
 
 ### 2.1 角色定义
 
-- Public 公众
-  - 仅可浏览图片
+- Public（公众）
+  - 可浏览图片
   - 不可调用写接口
 
-- Visitor 访客
+- User（登录用户）
   - 可上传图片
-  - 可编辑自己上传图片的标题、分类、标签
-  - 可删除自己上传图片
+  - 可编辑/移动/删除自己上传的图片
   - 不可修改他人图片
 
-- Admin 管理员
-  - 可编辑任意图片标题、分类、标签
-  - 可删除任意图片
-  - 可执行批量治理能力
+- Admin（管理员）
+  - 可上传图片
+  - 可编辑/移动/删除任意图片
+  - 可调用管理型接口（如 `getMeta` / `signDelete`）
 
-### 2.2 访问流程
+### 2.2 资源归属规则
 
-```mermaid
-graph TD
-    A[公众访问] --> B[只读浏览]
-    C[访客口令验证] --> D[签发访客会话令牌]
-    D --> E[上传图片]
-    D --> F[仅编辑本人图片]
-    D --> G[仅删除本人图片]
-    H[管理员口令验证] --> I[签发管理员会话令牌]
-    I --> J[全量管理图片]
-```
+每张图片元数据统一使用：
 
-### 2.3 资源归属规则
-
-每张图片元数据新增字段：
-
-- ownerId：上传者标识
-- createdByRole：visitor 或 admin
-- createdAt：上传时间
-- updatedAt：更新时间
+- `userId`：归属用户 ID（新字段）
+- `ownerId`：兼容字段（过渡期保留）
+- `createdByRole`：创建时角色（`user`/`admin`）
+- `createdAt`、`updatedAt`
+- `version`：元数据版本号（并发控制）
 
 权限判定：
 
-- visitor 仅当 ownerId 命中时可修改或删除
-- admin 不受 ownerId 限制
+- `user` 仅当资源归属命中自己 `userId` 时可管理
+- `admin` 不受归属限制
+
+### 2.3 会话模型
+
+- 登录成功后签发 Bearer Token
+- Token 原文仅返回一次，服务端仅存 `token_hash`
+- `user` 与 `admin` 使用不同 TTL（管理员更短）
+- 过期或撤销后统一视为未登录
 
 ---
 
-## 3. 当前设计缺陷复盘
+## 3. 当前实现状态（与代码一致）
 
-结合 [`docs/gallery-dev-diary.md`](docs/gallery-dev-diary.md)、[`source/gallery/gallery.js`](source/gallery/gallery.js)、[`workers/gallery-presign/worker.js`](workers/gallery-presign/worker.js) 评估：
+后端：`workers/gallery-presign/worker.js`
 
-### 3.1 安全性
+- 已实现账号接口：`register`、`login`、`me`、`logout`
+- 写接口统一鉴权：`sign`、`updateMeta`、`moveImage`、`deleteImage`
+- 归属兼容迁移：读取时可兼容 `ownerId -> userId`
+- 限流与输入校验：`sign` 频率限制、邮箱格式与密码长度校验、上传输入校验
 
-- 上传签名接口未限制角色，存在被滥用风险
-- 管理口令在前端本地长期存储，存在泄露面
-- 跨域放开范围过大，增加恶意请求触达概率
+前端：`source/gallery/gallery.js` + `source/gallery/index.html`
 
-### 3.2 可靠性
-
-- 列表接口单次返回上限，图库增大后可能漏图
-- 图片移动是读写删三步，异常时存在一致性风险
-
-### 3.3 可维护性
-
-- 接口能力与文档有漂移，协作成本上升
-- 分类配置硬编码，后续扩展需改前端代码
-
-### 3.4 用户体验
-
-- 多图上传元数据复用逻辑粗粒度
-- 删除流程使用原生确认框，与站内交互风格不一致
+- 已移除旧“访客/管理员口令分叉”
+- 已改为登录/注册一体弹窗
+- 已修复权限显隐：
+  - 未登录隐藏上传入口
+  - 仅 `user/admin` 可上传
+  - 管理按钮按角色/归属显示
 
 ---
 
-## 4. 分阶段实施计划
+## 4. 已做 / 待做 / 设计理念 / 产品体验
 
-## P0 权限重构与安全基线 必做
+### 4.1 已做（Done）
 
-### 目标
+1. 账号与会话体系已切换到 D1
+   - 已落地 `users/sessions` 表与会话校验链路
+   - 登录后仅返回一次明文 Token，服务端仅存 `token_hash`
+2. 认证接口已完成并可联调
+   - `register` / `login` / `me` / `logout`
+3. 写接口已统一 RBAC 校验
+   - `sign` / `updateMeta` / `moveImage` / `deleteImage`
+4. 前端认证体验已统一
+   - 移除旧“访客/管理员口令分叉”
+   - 改为登录/注册一体弹窗
+   - 会话恢复、过期清理、401 重登引导已接入
+5. 资源归属兼容迁移已进入可用状态
+   - 读取链路可兼容 `ownerId -> userId`
+   - 新写入链路以 `userId` 为准
 
-建立三层权限闭环：公众只读、访客仅本人可管、管理员全量可管。
+### 4.2 待做（Todo）
 
-### 主要改动
+1. 在 staging 完成全量回归并修复问题
+   - 覆盖第 7 章 API-01~API-11 与前端关键链路
+2. 完成 `ownerId -> userId` 迁移收口
+   - 对历史边界数据做专项回归，降低脏数据残留
+3. 安全基线补强与观测完善
+   - 强化异常日志维度，重点观察 401/403/409/429
+4. 生产切换与发布后观察
+   - 通过灰度 Go 条件后发布 production
+   - 观察 30~60 分钟，异常即按回滚预案执行
 
-后端 Worker：[`workers/gallery-presign/worker.js`](workers/gallery-presign/worker.js)
+### 4.3 设计理念
 
-1. 新增登录与会话接口
-   - loginVisitor 访客口令换令牌
-   - loginAdmin 管理员口令换令牌
-   - verifyToken 校验角色、过期时间
-2. 改造写接口鉴权
-   - sign 仅 visitor 或 admin 可调用
-   - updateMeta moveImage deleteImage 统一做 RBAC 校验
-3. 写入资源归属
-   - 上传完成后写 ownerId createdByRole createdAt
-4. 安全防护
-   - CORS 白名单
-   - key 前缀、扩展名、MIME 白名单校验
+1. 后端权威鉴权（Backend as Policy Source）
+   - 权限判断必须由 Worker 完成，前端仅做 UI 引导，避免“前端绕过”风险。
+2. 最小写放大（Min-Write Session）
+   - 会话采用固定有效期，不做每请求续期写库，优先控制成本与复杂度。
+3. 渐进式迁移（Progressive Migration）
+   - 对历史 `ownerId` 数据采用兼容读取 + 渐进归一，避免一次性迁移带来的高风险。
+4. 安全优先于体验扩展
+   - 先完成鉴权、限流、输入校验、冲突控制，再推进搜索/批量等增强功能。
 
-前端 Gallery：[`source/gallery/gallery.js`](source/gallery/gallery.js)、[`source/gallery/index.html`](source/gallery/index.html)
+### 4.4 产品体验（UX）
 
-1. 默认只读，上传入口仅登录访客或管理员后显示
-2. 使用会话令牌，不使用长期明文口令持久化
-3. 按角色和 ownerId 控制编辑、删除按钮可见性
-
-### 验收标准
-
-- 未登录用户调用写接口必然失败
-- visitor 仅能编辑删除自己上传图片
-- admin 可管理全部图片
-- public 浏览链路不受影响
-
-### 回滚要点
-
-- 为新鉴权路径保留开关，可临时回退到管理员单通道写权限
-
----
-
-## P1 数据一致性与性能 必做
-
-### 目标
-
-保障图库规模增长后仍可完整加载、稳定写入。
-
-### 主要改动
-
-后端 Worker：[`workers/gallery-presign/worker.js`](workers/gallery-presign/worker.js)
-
-1. list 支持分页 continuation token
-2. metadata 增加版本戳，写入采用乐观并发控制
-3. moveImage 增加失败补偿与幂等策略
-
-前端 Gallery：[`source/gallery/gallery.js`](source/gallery/gallery.js)
-
-1. 主列表支持增量加载
-2. 分类计数并行拉取并带失败重试
-
-### 验收标准
-
-- 图片量超过单页上限仍可完整浏览
-- 并发上传下 metadata 无明显覆盖丢失
-- 分类切换响应稳定
-
-### 回滚要点
-
-- 保留旧 list 读取分支开关，异常时可降级单页读取
+1. 低认知负担的登录体验
+   - 统一登录/注册入口，减少角色分叉导致的理解成本。
+2. 可预期的权限反馈
+   - 未登录直接隐藏上传入口；越权操作返回明确错误并提示重登/重试。
+3. 连续的上传与管理闭环
+   - 上传（签名 -> S3）成功后即时刷新列表；编辑/移动/删除均有清晰结果反馈。
+4. 面向稳定性的异常体验
+   - 401 自动清会话并引导认证；429 给出稍后重试提示；409 引导刷新处理冲突。
 
 ---
 
-## P2 Pixiv 风格鉴赏与治理增强 建议
+## 5. 分阶段计划（更新版）
 
-### 目标
+## P0 权限重构与安全基线（已落地）
 
-强化鉴赏体验与管理效率，形成浏览与治理闭环。
+### 结果
 
-### 功能清单
+- D1 `users/sessions` 已接入
+- 认证接口已上线（`register/login/me/logout`）
+- 写接口已统一 session 鉴权
+- 前端统一认证入口与会话恢复已完成
 
-1. 标题标签搜索
+### 验收结论
+
+- Public 调用写接口被拒绝
+- User 只能管理自己的资源
+- Admin 可管理全量资源
+
+---
+
+## P1 数据一致性与性能（进行中）
+
+### 重点
+
+1. `list` 分页与游标链路持续验证
+2. `updateMeta` 版本冲突流程回归
+3. `moveImage` 异常补偿与一致性验证
+
+---
+
+## P2 鉴赏体验增强（规划中）
+
+1. 标题/标签搜索
 2. 标签云筛选
-3. 批量移动批量删除 仅管理员
-4. 访客 我的上传 视图
-5. BlurHash 解码占位图
-
-### 验收标准
-
-- 支持 浏览 搜索 筛选 上传 管理 的完整链路
-- 管理动作可在单页完成
+3. 批量操作（仅 admin）
+4. BlurHash 占位优化
 
 ---
 
-## P3 可观测性与运营能力 可选
+## 6. 老数据迁移策略（ownerId -> userId）
 
-### 目标
+迁移原则：
 
-提升问题定位速度和长期运营稳定性。
+- 不做一次性全量离线迁移
+- 在读取链路进行 lazy normalize
+- 写回时补全标准字段，统一到 `userId`
 
-### 功能清单
+兼容规则：
 
-1. 写操作审计日志
-2. 关键接口错误率监控
-3. 异常峰值告警
-
----
-
-## 5. 接口草案
-
-统一建议：前缀 `/api/gallery`，返回结构保持 `{ code, message, data }`。
-
-- `POST /loginVisitor`
-- `POST /loginAdmin`
-- `GET /list`
-- `POST /sign`
-- `POST /updateMeta`
-- `POST /moveImage`
-- `DELETE /deleteImage`
-
-其中：
-
-- 写接口必须校验 Bearer 令牌
-- `updateMeta moveImage deleteImage` 必须带资源归属校验
+- 若仅有 `ownerId`，则在读取后映射为 `userId`
+- 若两者都缺失，则按历史策略落到 admin 归属并记录迁移日志
 
 ---
 
-## 6. 数据结构草案
+## 7. 接口基线（当前 Worker 语义）
 
-```json
-{
-  "img/gallery/二次元/xxx.jpg": {
-    "title": "示例标题",
-    "tags": ["二次元", "插画"],
-    "ownerId": "visitor_abc123",
-    "createdByRole": "visitor",
-    "createdAt": "2026-02-23T16:00:00.000Z",
-    "updatedAt": "2026-02-23T16:10:00.000Z",
-    "version": 3
-  }
-}
-```
+统一返回结构：`{ code, message?, data?, ... }`
 
----
-
-## 7. 明日开发建议顺序
-
-1. 先完成 P0 的 Worker 鉴权骨架
-2. 再接前端会话和按钮权限
-3. 最后补 P1 分页与一致性
-4. P2 功能按体验优先级逐步打开
+- `GET /?action=list`
+- `POST /?action=register`
+- `POST /?action=login`
+- `GET /?action=me`
+- `POST /?action=logout`
+- `POST /?action=sign`
+- `POST /?action=updateMeta`
+- `POST /?action=moveImage`
+- `DELETE /?action=deleteImage&key=...`
+- `GET /?action=getMeta`（admin）
+- `GET /?action=signDelete&key=...`（admin）
 
 ---
 
-## 8. 风险与取舍
+## 8. RBAC 回归清单（接口级 + 前端链路）
 
-- 不做完整账号系统，维护成本最低，但无法提供用户自助找回与跨端身份绑定
-- 双口令模式适合当前阶段，后续如果上传用户增长明显，再升级到轻账号体系
+### 7.1 测试准备
+
+- Secret 已配置：`SESSION_SECRET`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`
+- 若需初始化 admin：确认 D1 中存在 `role=admin` 的用户
+- 前端页面：`source/gallery/index.html`
+- Worker 入口：`workers/gallery-presign/worker.js`
+
+### 7.2 接口权限矩阵
+
+| 用例ID | 接口 | Public(无 Token) | User Token | Admin Token | 断言重点 |
+|---|---|---:|---:|---:|---|
+| API-01 | `POST /?action=register` | 200/400/409 | 200/400/409 | 200/400/409 | 邮箱合法、重复邮箱 409 |
+| API-02 | `POST /?action=login` | 200/400/401 | 200/400/401 | 200/400/401 | 正确账号登录成功，错误口令 401 |
+| API-03 | `GET /?action=me` | 401 | 200 | 200 | 仅有效会话可通过 |
+| API-04 | `POST /?action=logout` | 401 | 200 | 200 | 会话撤销后再次访问 me 应 401 |
+| API-05 | `GET /?action=list` | 200 | 200 | 200 | public 只读；user 仅可管理本人资源；admin 全量 |
+| API-06 | `POST /?action=sign` | 401 | 200/429/400 | 200/429/400 | 未登录拒绝；限流 429；非法输入 400 |
+| API-07 | `POST /?action=updateMeta` | 401 | 200/403/409 | 200/409 | user 不能改他人(403)；并发冲突 409 |
+| API-08 | `POST /?action=moveImage` | 401 | 200/403/404 | 200/404 | user 只能移动本人资源 |
+| API-09 | `DELETE /?action=deleteImage` | 401 | 200/403 | 200 | user 不能删他人资源 |
+| API-10 | `GET /?action=getMeta` | 401 | 403/401 | 200 | 仅 admin 可访问 |
+| API-11 | `GET /?action=signDelete` | 401 | 403/401 | 200 | 仅 admin 可访问 |
+
+### 7.3 前端关键链路
+
+文件：`source/gallery/gallery.js`、`source/gallery/index.html`
+
+1. 认证链路
+   - 未登录显示“登录/注册”
+   - 登录成功后显示会话角色与退出按钮
+   - 刷新后会话可恢复；过期后自动清理并提示重登
+
+2. 上传链路（user/admin）
+   - 正常上传：签名 -> S3 -> 列表刷新
+   - 401：清理本地会话并打开认证弹窗
+   - 429：显示“稍后重试”提示
+
+3. 管理链路
+   - user：仅可编辑/删除自己的图片
+   - admin：可编辑/移动/删除任意图片
+   - `updateMeta` 409：提示冲突并刷新列表
+
+### 7.4 边界条件
+
+- 上传大小：`0B`、`10MB`、`10MB+1B`
+- MIME：`image/jpeg`、`image/png`、`image/webp`（通过）与非法类型（拒绝）
+- 非法 key：空 key、目录穿越、非 `img/gallery/` 前缀
+- 分页：`limit=1`、无效 `cursor`、最后一页 `hasMore=false`
+- 兼容迁移：老数据仅有 `ownerId` 时，读取后可正常管理并逐步归一
 
 ---
 
-## 9. 结论
+## 9. 部署与回滚（Wrangler）
 
-推荐路线：
+### 8.1 wrangler 基线
 
-- 现在采用 双口令 + 会话令牌 + 资源归属校验
-- 保持低维护与足够权限隔离
-- 用 P0 P1 打稳底座，再做 P2 的鉴赏体验
+文件：`workers/gallery-presign/wrangler.toml`
 
-该方案可在当前项目结构下平滑落地，且与现有图床架构兼容。
+- 已拆分 `staging` 与 `production`
+- `vars` 仅放非敏感配置（`S3_ENDPOINT`、`S3_REGION`、`S3_BUCKET`）
+- 敏感项必须通过 `wrangler secret put`
+
+### 8.2 Secret 清单
+
+- `SESSION_SECRET`
+- `S3_ACCESS_KEY`
+- `S3_SECRET_KEY`
+
+> 若业务要求“仅管理员可注册/开放注册开关”，可额外配置策略类 Secret，但不再依赖旧 `VISITOR_PASSWORD` 双口令模型。
+
+### 8.3 灰度发布流程
+
+1. 本地静态检查
+   - `node --check workers/gallery-presign/worker.js`
+   - `node --check source/gallery/gallery.js`
+2. 发布 staging
+   - `npm run deploy -- --env staging`
+3. 执行第 7 章回归（至少 API-01~API-11 + 前端关键链路）
+4. 观察日志
+   - `npm run tail -- --env staging`
+5. 满足 Go 条件后发布 production
+   - `npm run deploy -- --env production`
+6. 生产观察 30~60 分钟，重点关注 5xx 与 401/403/429 波动
+
+### 8.4 回滚预案
+
+触发条件（任一满足即回滚）：
+
+- 持续 5xx 峰值
+- 鉴权异常导致写接口大面积失败
+- 元数据冲突异常上升并影响主流程
+
+回滚策略：
+
+1. 回滚 Worker 到上一稳定版本
+2. 暂停前端相关发布，保证只读链路可用
+3. 导出故障窗口日志，在 staging 复现并修复
+4. 修复后重新走灰度，不直接热修 production
+
+---
+
+## 10. 结论
+
+当前方案已从旧双口令模型迁移到 D1 账号与会话模型，且前后端主链路已对齐：
+
+- 角色术语统一为 `public / user / admin`
+- 认证接口统一为 `register/login/me/logout`
+- 写接口统一 session 校验
+- 前端认证入口与权限显隐已完成
+
+后续重点是完成 owner 兼容迁移收口、安全基线补强与 staging 全量回归，再切换 production。

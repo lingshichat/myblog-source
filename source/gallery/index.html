@@ -15,35 +15,8 @@
     <script src="../js/bg-loader-bitiful.js"></script>
 
     <div id="app" v-cloak class="app-container">
-        <!-- 登录界面 -->
-        <div v-if="!isUnlocked" class="login-container">
-            <div class="login-card">
-                <div class="login-icon-wrapper">
-                    <i class="fa-solid fa-images login-icon"></i>
-                    <div class="icon-glow"></div>
-                </div>
-                <h2 class="login-title">泠诗的存图站</h2>
-                <p class="login-subtitle">收藏每一帧美好</p>
-                <div class="login-input-area">
-                    <input type="password" v-model="password" @keyup.enter="unlock" placeholder="输入访问密钥..." autofocus>
-                    <button class="login-btn" @click="unlock" :disabled="loading">
-                        <i class="fa-solid" :class="loading ? 'fa-circle-notch fa-spin' : 'fa-arrow-right'"></i>
-                    </button>
-                </div>
-                <div class="checkbox-group">
-                    <input type="checkbox" id="remember" v-model="rememberMe">
-                    <label for="remember">记住密码</label>
-                </div>
-                <transition name="fade">
-                    <div v-if="errorMsg" class="error-toast">
-                        <i class="fa-regular fa-face-frown-open"></i> {{ errorMsg }}
-                    </div>
-                </transition>
-            </div>
-        </div>
-
         <!-- 主界面 -->
-        <template v-else>
+        <template>
             <!-- 顶部导航 -->
             <nav class="glass-nav">
                 <div class="nav-left">
@@ -54,11 +27,17 @@
                     <button class="nav-btn" @click="loadImages" :disabled="loading" title="刷新">
                         <i class="fa-solid fa-rotate-right" :class="{'fa-spin': loading}"></i>
                     </button>
-                    <button class="nav-btn" :class="{ 'active': isAdminMode }" @click="toggleAdminMode" :title="isAdminMode ? '退出管理' : '管理模式'">
-                        <i class="fa-solid" :class="isAdminMode ? 'fa-lock-open' : 'fa-gear'"></i>
+                    <button class="nav-btn" v-if="!sessionToken" @click="openAuthModal('login')" title="登录">
+                        <i class="fa-solid fa-right-to-bracket"></i>
                     </button>
-                    <button class="nav-btn logout-btn" @click="logout" title="锁定">
-                        <i class="fa-solid fa-lock"></i>
+                    <button class="nav-btn" v-if="!sessionToken" @click="openAuthModal('register')" title="注册">
+                        <i class="fa-solid fa-user-plus"></i>
+                    </button>
+                    <button class="nav-btn" v-if="sessionRole === 'admin'" title="管理员账号">
+                        <i class="fa-solid fa-shield-halved"></i>
+                    </button>
+                    <button class="nav-btn logout-btn" v-if="sessionToken" @click="logout" title="退出登录">
+                        <i class="fa-solid fa-right-from-bracket"></i>
                     </button>
                 </div>
             </nav>
@@ -85,7 +64,7 @@
 
                 <!-- 图片网格 -->
                 <div class="masonry-grid" v-if="images.length > 0">
-                    <div class="masonry-item" v-for="image in images" :key="image.key" :class="{ 'admin-mode': isAdminMode }">
+                    <div class="masonry-item" v-for="image in images" :key="image.key">
                         <a :href="image.url" data-fancybox="gallery" :data-caption="image.title || image.name">
                             <img :src="image.thumbnailUrl" :alt="image.title || image.name" loading="lazy">
                         </a>
@@ -99,7 +78,7 @@
                             <div class="image-actions">
                                 <button class="action-btn" @click="copyMarkdown(image)" title="复制 Markdown"><i class="fa-solid fa-code"></i></button>
                                 <button class="action-btn" @click="copyUrl(image)" title="复制链接"><i class="fa-regular fa-copy"></i></button>
-                                <template v-if="isAdminMode">
+                                <template v-if="sessionRole === 'admin'">
                                     <button class="action-btn edit-btn" @click="openEditModal(image)" title="编辑"><i class="fa-solid fa-pen"></i></button>
                                     <button class="action-btn delete-btn" @click="confirmDelete(image)" title="删除"><i class="fa-solid fa-trash"></i></button>
                                 </template>
@@ -121,7 +100,7 @@
             </main>
 
             <!-- FAB 上传按钮 -->
-            <button class="fab-upload" @click="showUploadModal = true" title="上传图片"><i class="fa-solid fa-plus"></i></button>
+            <button class="fab-upload" v-if="sessionToken && (sessionRole === 'user' || sessionRole === 'admin')" @click="showUploadModal = true" title="上传图片"><i class="fa-solid fa-plus"></i></button>
             <input type="file" ref="fileInput" @change="handleFileSelect" accept="image/*" multiple hidden>
 
             <!-- 上传弹窗 -->
@@ -224,24 +203,40 @@
                 </div>
             </transition>
 
-            <!-- 管理员登录弹窗 -->
+            <!-- 登录/注册弹窗 -->
             <transition name="fade">
-                <div class="modal-overlay" v-if="showAdminLogin" @click.self="showAdminLogin = false">
-                    <div class="modal-content" style="max-width: 400px;">
+                <div class="modal-overlay" v-if="showAuthModal" @click.self="showAuthModal = false">
+                    <div class="modal-content" style="max-width: 420px;">
                         <div class="modal-header">
-                            <h3><i class="fa-solid fa-shield-halved"></i> 管理员验证</h3>
-                            <button class="close-btn" @click="showAdminLogin = false"><i class="fa-solid fa-xmark"></i></button>
+                            <h3>
+                                <i class="fa-solid" :class="authMode === 'register' ? 'fa-user-plus' : 'fa-right-to-bracket'"></i>
+                                {{ authMode === 'register' ? '注册账号' : '账号登录' }}
+                            </h3>
+                            <button class="close-btn" @click="showAuthModal = false"><i class="fa-solid fa-xmark"></i></button>
                         </div>
                         <div class="modal-body">
-                            <p class="admin-hint">请输入管理员密码以进入管理模式</p>
                             <div class="form-group">
-                                <input type="password" v-model="adminPassword" @keyup.enter="loginAdmin" placeholder="管理员密码..." class="form-input" autofocus>
+                                <label><i class="fa-solid fa-envelope"></i> 邮箱</label>
+                                <input type="email" v-model="authEmail" @keyup.enter="submitAuth" placeholder="name@example.com" class="form-input" autofocus>
                             </div>
-                            <transition name="fade"><p class="error-text" v-if="adminError">{{ adminError }}</p></transition>
+                            <div class="form-group">
+                                <label><i class="fa-solid fa-key"></i> 密码</label>
+                                <input type="password" v-model="authPassword" @keyup.enter="submitAuth" placeholder="请输入密码" class="form-input">
+                            </div>
+                            <transition name="fade"><p class="error-text" v-if="authError">{{ authError }}</p></transition>
+                            <p class="admin-hint" style="margin-top: 8px;">
+                                {{ authMode === 'register' ? '已有账号？' : '没有账号？' }}
+                                <a href="javascript:void(0)" @click="authMode = authMode === 'register' ? 'login' : 'register'">
+                                    {{ authMode === 'register' ? '去登录' : '去注册' }}
+                                </a>
+                            </p>
                         </div>
                         <div class="modal-footer">
-                            <button class="btn-secondary" @click="showAdminLogin = false">取消</button>
-                            <button class="btn-primary" @click="loginAdmin" :disabled="!adminPassword"><i class="fa-solid fa-unlock"></i> 验证</button>
+                            <button class="btn-secondary" @click="showAuthModal = false">取消</button>
+                            <button class="btn-primary" @click="submitAuth" :disabled="authSubmitting || !authEmail || !authPassword">
+                                <i class="fa-solid" :class="authSubmitting ? 'fa-circle-notch fa-spin' : (authMode === 'register' ? 'fa-user-plus' : 'fa-right-to-bracket')"></i>
+                                {{ authSubmitting ? '提交中...' : (authMode === 'register' ? '注册并登录' : '登录') }}
+                            </button>
                         </div>
                     </div>
                 </div>
