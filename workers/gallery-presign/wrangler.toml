@@ -31,13 +31,15 @@ workers_dev = true
 S3_ENDPOINT = "https://s3.bitiful.net"
 S3_REGION = "cn-east-1"
 S3_BUCKET = "lingshichat"
+ALLOW_REGISTRATION = "false"
+CORS_ORIGINS = "https://lingshichat.top,https://www.lingshichat.top"
 
 # D1 数据库绑定（本地/默认）
 # 创建后填入数据库 ID：wrangler d1 create gallery_auth
 [[d1_databases]]
 binding = "DB"
 database_name = "gallery_auth"
-database_id = ""
+database_id = "a0da254a-4cbc-45cd-a01f-b576dc5cee85"
 
 # =============================
 # Staging 灰度环境
@@ -75,7 +77,7 @@ S3_BUCKET = "lingshichat"
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "gallery_auth"
-database_id = ""
+database_id = "a0da254a-4cbc-45cd-a01f-b576dc5cee85"
 
 # 建议正式环境改为自定义域路由，避免直接暴露 workers.dev
 # [env.production.routes]

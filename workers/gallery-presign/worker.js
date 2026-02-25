@@ -15,12 +15,20 @@
  * - S3_SECRET_KEY: Secret Access Key
  */
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-  'Access-Control-Max-Age': '86400',
-};
+function getCorsHeaders(request, env) {
+  const origin = request.headers.get('Origin') || '';
+  const allowedOrigins = (env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+
+  const isLocalDev = origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:');
+  const isAllowed = isLocalDev || allowedOrigins.includes(origin);
+
+  return {
+    'Access-Control-Allow-Origin': isAllowed ? origin : '',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Max-Age': '86400',
+  };
+}
 
 const METADATA_KEY = 'img/gallery/_metadata.json';
 const ADMIN_OWNER_ID = 'admin';
@@ -29,19 +37,12 @@ const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
 const ADMIN_SESSION_TTL_SECONDS = 12 * 60 * 60;
 const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+const PBKDF2_ITERATIONS = 100000;
 const KEY_PREFIX = 'img/gallery/';
 const SIGN_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const SIGN_RATE_LIMIT_MAX = 30;
 const signRateLimitBucket = new Map();
 
-function json(code, data) {
-  const safeCode = Number(code);
-  const status = Number.isInteger(safeCode) && safeCode >= 100 && safeCode <= 599 ? safeCode : 500;
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders }
-  });
-}
 
 function readBearerToken(authHeader) {
   if (!authHeader || !authHeader.startsWith('Bearer ')) return '';
@@ -110,26 +111,35 @@ async function sha256Base64Url(input) {
 }
 
 async function hashPassword(password, salt = randomHex(16)) {
-  const rounds = 120000;
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(password),
-    { name: 'PBKDF2' },
-    false,
-    ['deriveBits']
-  );
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: 'PBKDF2',
-      hash: 'SHA-256',
-      salt: encoder.encode(salt),
-      iterations: rounds
-    },
-    keyMaterial,
-    256
-  );
-  const hash = base64UrlEncodeBytes(new Uint8Array(bits));
-  return `pbkdf2_sha256$${rounds}$${salt}$${hash}`;
+  const rounds = PBKDF2_ITERATIONS;
+  try {
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(password),
+      { name: 'PBKDF2' },
+      false,
+      ['deriveBits']
+    );
+    const bits = await crypto.subtle.deriveBits(
+      {
+        name: 'PBKDF2',
+        hash: 'SHA-256',
+        salt: encoder.encode(salt),
+        iterations: rounds
+      },
+      keyMaterial,
+      256
+    );
+    const hash = base64UrlEncodeBytes(new Uint8Array(bits));
+    return `pbkdf2_sha256$${rounds}$${salt}$${hash}`;
+  } catch (error) {
+    console.error('[auth][pbkdf2][hashPassword] failed', {
+      rounds,
+      saltLength: String(salt || '').length,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    throw error;
+  }
 }
 
 async function verifyPasswordHash(password, storedHash) {
@@ -137,27 +147,37 @@ async function verifyPasswordHash(password, storedHash) {
   const [algo, roundsRaw, salt, expectedHash] = storedHash.split('$');
   if (algo !== 'pbkdf2_sha256') return false;
   const rounds = Number(roundsRaw);
-  if (!Number.isFinite(rounds) || rounds < 1000 || rounds > 500000) return false;
+  if (!Number.isFinite(rounds) || rounds < 1000 || rounds > PBKDF2_ITERATIONS) return false;
 
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(password),
-    { name: 'PBKDF2' },
-    false,
-    ['deriveBits']
-  );
-  const bits = await crypto.subtle.deriveBits(
-    {
-      name: 'PBKDF2',
-      hash: 'SHA-256',
-      salt: encoder.encode(salt),
-      iterations: rounds
-    },
-    keyMaterial,
-    256
-  );
-  const computed = base64UrlEncodeBytes(new Uint8Array(bits));
-  return safeEqual(computed, expectedHash);
+  try {
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(password),
+      { name: 'PBKDF2' },
+      false,
+      ['deriveBits']
+    );
+    const bits = await crypto.subtle.deriveBits(
+      {
+        name: 'PBKDF2',
+        hash: 'SHA-256',
+        salt: encoder.encode(salt),
+        iterations: rounds
+      },
+      keyMaterial,
+      256
+    );
+    const computed = base64UrlEncodeBytes(new Uint8Array(bits));
+    return safeEqual(computed, expectedHash);
+  } catch (error) {
+    console.error('[auth][pbkdf2][verifyPasswordHash] failed', {
+      rounds,
+      hashAlgo: algo,
+      saltLength: String(salt || '').length,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return false;
+  }
 }
 
 function ensureDb(env) {
@@ -175,18 +195,6 @@ async function hashSessionToken(token, env) {
 async function resolveSession(authHeader, env) {
   const token = readBearerToken(authHeader);
   if (!token) return null;
-
-  // 兼容：保留 ADMIN_PASSWORD 直通管理员能力（建议生产关闭）
-  if (env.ADMIN_PASSWORD && token === env.ADMIN_PASSWORD) {
-    return {
-      sessionId: 'legacy_admin',
-      userId: ADMIN_OWNER_ID,
-      email: '',
-      role: 'admin',
-      tokenHash: '',
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString()
-    };
-  }
 
   const db = ensureDb(env);
   const tokenHash = await hashSessionToken(token, env);
@@ -402,6 +410,13 @@ function buildListResponseItem(image, metadata, session) {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+function encodeS3Path(path) {
+  return String(path || '')
+    .split('/')
+    .map(segment => encodeURIComponent(segment))
+    .join('/');
+}
+
 async function sha256(data) {
   const buf = data instanceof ArrayBuffer ? data : encoder.encode(data);
   const hash = await crypto.subtle.digest('SHA-256', buf);
@@ -461,9 +476,10 @@ async function createSignature(config, method, path, queryParams, headers, bodyH
 async function s3Get(config, key) {
   const host = `${config.bucket}.s3.bitiful.net`;
   const headers = { Host: host, 'x-amz-content-sha256': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' };
-  const sig = await createSignature(config, 'GET', `/${key}`, {}, headers, headers['x-amz-content-sha256']);
+  const encodedPath = encodeS3Path(key);
+  const sig = await createSignature(config, 'GET', `/${encodedPath}`, {}, headers, headers['x-amz-content-sha256']);
   
-  const res = await fetch(`https://${host}/${key}`, {
+  const res = await fetch(`https://${host}/${encodedPath}`, {
     headers: { Authorization: sig.authorization, 'x-amz-date': sig.amzDate, 'x-amz-content-sha256': headers['x-amz-content-sha256'] }
   });
   
@@ -474,9 +490,10 @@ async function s3Put(config, key, body, contentType) {
   const host = `${config.bucket}.s3.bitiful.net`;
   const bodyHash = await sha256(body);
   const headers = { Host: host, 'x-amz-content-sha256': bodyHash, 'Content-Type': contentType };
-  const sig = await createSignature(config, 'PUT', `/${key}`, {}, headers, bodyHash);
+  const encodedPath = encodeS3Path(key);
+  const sig = await createSignature(config, 'PUT', `/${encodedPath}`, {}, headers, bodyHash);
   
-  const res = await fetch(`https://${host}/${key}`, {
+  const res = await fetch(`https://${host}/${encodedPath}`, {
     method: 'PUT',
     headers: { Authorization: sig.authorization, 'x-amz-date': sig.amzDate, 'x-amz-content-sha256': bodyHash, 'Content-Type': contentType },
     body
@@ -488,9 +505,10 @@ async function s3Put(config, key, body, contentType) {
 async function s3Delete(config, key) {
   const host = `${config.bucket}.s3.bitiful.net`;
   const headers = { Host: host, 'x-amz-content-sha256': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' };
-  const sig = await createSignature(config, 'DELETE', `/${key}`, {}, headers, headers['x-amz-content-sha256']);
+  const encodedPath = encodeS3Path(key);
+  const sig = await createSignature(config, 'DELETE', `/${encodedPath}`, {}, headers, headers['x-amz-content-sha256']);
   
-  const res = await fetch(`https://${host}/${key}`, {
+  const res = await fetch(`https://${host}/${encodedPath}`, {
     method: 'DELETE',
     headers: { Authorization: sig.authorization, 'x-amz-date': sig.amzDate, 'x-amz-content-sha256': headers['x-amz-content-sha256'] }
   });
@@ -536,7 +554,8 @@ function parseImages(xml, publicUrl) {
       size: parseInt(block.match(/<Size>([^<]+)<\/Size>/)?.[1] || '0', 10),
       lastModified: block.match(/<LastModified>([^<]+)<\/LastModified>/)?.[1] || new Date().toISOString(),
       url: `${publicUrl}/${key}`,
-      thumbnailUrl: `${publicUrl}/${key}?w=400&h=400&fit=cover&q=80&f=webp`,
+      thumbnailUrl: `${publicUrl}/${key}?w=400&q=80&f=webp`,
+      placeholderUrl: `${publicUrl}/${key}?w=24&q=20&f=webp`,
       blurhashUrl: `${publicUrl}/${key}?fmt=blurhash`
     });
   }
@@ -544,29 +563,37 @@ function parseImages(xml, publicUrl) {
   return images.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
 }
 
-async function getUploadSignature(config, key, contentType) {
+async function getUploadSignature(config, key, contentType, sizeBytes) {
   const host = `${config.bucket}.s3.bitiful.net`;
-  const headers = { Host: host, 'x-amz-content-sha256': 'UNSIGNED-PAYLOAD', 'Content-Type': contentType };
-  const sig = await createSignature(config, 'PUT', `/${key}`, {}, headers, 'UNSIGNED-PAYLOAD');
+  const encodedKey = encodeS3Path(key);
+  const headers = {
+    Host: host,
+    'x-amz-content-sha256': 'UNSIGNED-PAYLOAD',
+    'Content-Type': contentType,
+    'Content-Length': String(sizeBytes)
+  };
+  const sig = await createSignature(config, 'PUT', `/${encodedKey}`, {}, headers, 'UNSIGNED-PAYLOAD');
   
   return {
-    url: `https://${host}/${key}`,
+    url: `https://${host}/${encodedKey}`,
     headers: {
       Authorization: sig.authorization,
       'x-amz-date': sig.amzDate,
       'x-amz-content-sha256': 'UNSIGNED-PAYLOAD',
-      'Content-Type': contentType
+      'Content-Type': contentType,
+      'Content-Length': String(sizeBytes)
     }
   };
 }
 
 async function getDeleteSignature(config, key) {
   const host = `${config.bucket}.s3.bitiful.net`;
+  const encodedKey = encodeS3Path(key);
   const headers = { Host: host, 'x-amz-content-sha256': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' };
-  const sig = await createSignature(config, 'DELETE', `/${key}`, {}, headers, headers['x-amz-content-sha256']);
+  const sig = await createSignature(config, 'DELETE', `/${encodedKey}`, {}, headers, headers['x-amz-content-sha256']);
   
   return {
-    url: `https://${host}/${key}`,
+    url: `https://${host}/${encodedKey}`,
     headers: {
       Authorization: sig.authorization,
       'x-amz-date': sig.amzDate,
@@ -576,26 +603,196 @@ async function getDeleteSignature(config, key) {
 }
 
 // ============================================
-// Metadata Operations
+// Metadata Operations (D1)
 // ============================================
 
-async function getMetadata(config) {
-  const res = await s3Get(config, METADATA_KEY);
-  if (res.status === 404) return {};
-  if (!res.ok) throw new Error(`获取元数据失败: ${res.status}`);
-  
+function parseTags(rawTags) {
+  if (Array.isArray(rawTags)) return rawTags;
+  if (typeof rawTags !== 'string' || !rawTags.trim()) return [];
   try {
-    return await res.json();
+    const parsed = JSON.parse(rawTags);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
-    return {};
+    return [];
   }
 }
 
-async function saveMetadata(config, metadata) {
-  const body = JSON.stringify(metadata, null, 2);
-  const res = await s3Put(config, METADATA_KEY, body, 'application/json');
-  if (!res.ok) throw new Error(`保存元数据失败: ${res.status}`);
-  return true;
+function metadataFromDbRow(row) {
+  if (!row) return null;
+  return {
+    title: typeof row.title === 'string' ? row.title : '',
+    tags: parseTags(row.tags),
+    userId: row.userId || row.user_id || ADMIN_OWNER_ID,
+    ownerId: row.ownerId || row.owner_id || row.userId || row.user_id || ADMIN_OWNER_ID,
+    createdByRole: row.createdByRole || row.created_by_role || 'user',
+    visibility: row.visibility || 'private',
+    createdAt: row.createdAt || row.created_at || nowIso(),
+    updatedAt: row.updatedAt || row.updated_at || nowIso(),
+    version: Number.isFinite(Number(row.version)) ? Number(row.version) : 1
+  };
+}
+
+function resolveResourceEntryFromRow(row, key) {
+  if (row) {
+    return normalizeMetadataEntry(metadataFromDbRow(row));
+  }
+  const userId = extractUserIdFromKey(key);
+  const createdByRole = userId === ADMIN_OWNER_ID ? 'admin' : 'user';
+  return {
+    ...normalizeMetadataEntry(null),
+    userId,
+    ownerId: userId,
+    createdByRole,
+    visibility: 'private'
+  };
+}
+
+async function getImageMetadata(env, key) {
+  const db = ensureDb(env);
+  return db.prepare(`
+    SELECT
+      key,
+      title,
+      tags,
+      user_id AS userId,
+      owner_id AS ownerId,
+      created_by_role AS createdByRole,
+      visibility,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      version
+    FROM images
+    WHERE key = ?
+    LIMIT 1
+  `).bind(key).first();
+}
+
+async function getImagesMetadataByKeys(env, keys) {
+  const normalizedKeys = Array.from(new Set((keys || []).filter(Boolean)));
+  if (normalizedKeys.length === 0) return new Map();
+
+  const db = ensureDb(env);
+  const placeholders = normalizedKeys.map(() => '?').join(',');
+  const sql = `
+    SELECT
+      key,
+      title,
+      tags,
+      user_id AS userId,
+      owner_id AS ownerId,
+      created_by_role AS createdByRole,
+      visibility,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      version
+    FROM images
+    WHERE key IN (${placeholders})
+  `;
+  const result = await db.prepare(sql).bind(...normalizedKeys).all();
+  const rows = Array.isArray(result?.results) ? result.results : [];
+
+  const metadataMap = new Map();
+  rows.forEach((row) => {
+    metadataMap.set(row.key, row);
+  });
+  return metadataMap;
+}
+
+async function listAllImageMetadata(env) {
+  const db = ensureDb(env);
+  const result = await db.prepare(`
+    SELECT
+      key,
+      title,
+      tags,
+      user_id AS userId,
+      owner_id AS ownerId,
+      created_by_role AS createdByRole,
+      visibility,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      version
+    FROM images
+  `).all();
+  return Array.isArray(result?.results) ? result.results : [];
+}
+
+async function upsertImageMetadata(env, key, metadata) {
+  const db = ensureDb(env);
+  const entry = normalizeMetadataEntry(metadata);
+  await db.prepare(`
+    INSERT INTO images (
+      key,
+      title,
+      tags,
+      user_id,
+      owner_id,
+      created_by_role,
+      visibility,
+      created_at,
+      updated_at,
+      version
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET
+      title = excluded.title,
+      tags = excluded.tags,
+      user_id = excluded.user_id,
+      owner_id = excluded.owner_id,
+      created_by_role = excluded.created_by_role,
+      visibility = excluded.visibility,
+      created_at = excluded.created_at,
+      updated_at = excluded.updated_at,
+      version = excluded.version
+  `).bind(
+    key,
+    entry.title,
+    JSON.stringify(Array.isArray(entry.tags) ? entry.tags : []),
+    entry.userId,
+    entry.ownerId,
+    entry.createdByRole,
+    entry.visibility,
+    entry.createdAt,
+    entry.updatedAt,
+    Number.isFinite(Number(entry.version)) ? Number(entry.version) : 1
+  ).run();
+}
+
+async function deleteImageMetadata(env, key) {
+  const db = ensureDb(env);
+  await db.prepare('DELETE FROM images WHERE key = ?').bind(key).run();
+}
+
+async function migrateMetadataFromS3(config, env) {
+  const res = await s3Get(config, METADATA_KEY);
+  if (res.status === 404) {
+    return { migrated: 0, skipped: 0 };
+  }
+  if (!res.ok) {
+    throw new Error(`读取历史元数据失败: ${res.status}`);
+  }
+
+  let legacyMetadata = {};
+  try {
+    legacyMetadata = await res.json();
+  } catch {
+    legacyMetadata = {};
+  }
+
+  const entries = Object.entries(legacyMetadata || {}).filter(([key]) => !!key);
+  let migrated = 0;
+  let skipped = 0;
+
+  for (const [key, raw] of entries) {
+    const normalized = resolveResourceEntryFromRow(metadataFromDbRow(raw), key);
+    try {
+      await upsertImageMetadata(env, key, normalized);
+      migrated += 1;
+    } catch {
+      skipped += 1;
+    }
+  }
+
+  return { migrated, skipped };
 }
 
 // ============================================
@@ -604,6 +801,16 @@ async function saveMetadata(config, metadata) {
 
 export default {
   async fetch(request, env) {
+    const corsHeaders = getCorsHeaders(request, env);
+    const json = (code, data) => {
+      const safeCode = Number(code);
+      const status = Number.isInteger(safeCode) && safeCode >= 100 && safeCode <= 599 ? safeCode : 500;
+      return new Response(JSON.stringify(data), {
+        status,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders }
+      });
+    };
+
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: corsHeaders });
     }
@@ -636,10 +843,13 @@ export default {
         const safePrefix = requestedPrefix.startsWith(KEY_PREFIX)
           ? requestedPrefix
           : `${KEY_PREFIX}${requestedPrefix}`;
+        const prefix = safePrefix || KEY_PREFIX;
 
-        const prefix = listSession.role === 'user'
-          ? `${KEY_PREFIX}${listSession.userId}/`
-          : (safePrefix || KEY_PREFIX);
+        const ownerFilter = (url.searchParams.get('owner') || '').trim().toLowerCase();
+        const mineOnly = ownerFilter === 'mine';
+        if (mineOnly && listSession.role === 'public') {
+          return json(401, { code: 401, message: '登录后可查看“我的图片”' });
+        }
 
         const limitRaw = Number(url.searchParams.get('limit'));
         const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.floor(limitRaw), 1), 200) : 60;
@@ -647,45 +857,36 @@ export default {
 
         const images = await listImages(config, prefix);
 
-        const metadata = await getMetadata(config);
-        let metadataChanged = false;
+        const metadataMap = await getImagesMetadataByKeys(env, images.map((img) => img.key));
 
         const visibleImages = images
-          .map(img => {
-            const original = metadata[img.key];
-            const normalized = resolveResourceEntry(metadata, img.key);
-            const shouldWriteBack = !original || JSON.stringify(original) !== JSON.stringify(normalized);
-            if (shouldWriteBack) {
-              metadata[img.key] = normalized;
-              metadataChanged = true;
-              console.log('[gallery-migration] metadata normalized', {
-                key: img.key,
-                changedFields: Object.keys(normalized).filter((field) => !original || JSON.stringify(original[field]) !== JSON.stringify(normalized[field])),
-                migratedAt: new Date().toISOString()
-              });
-            }
+          .map((img) => {
+            const row = metadataMap.get(img.key) || null;
+            const normalized = resolveResourceEntryFromRow(row, img.key);
             return { image: img, metadata: normalized };
           })
-          .filter(item => listSession.role === 'public' || canManageResource(listSession, item.metadata))
+          .filter((item) => {
+            if (!mineOnly) {
+              return true;
+            }
+            const ownerId = item.metadata.userId || item.metadata.ownerId || extractUserIdFromKey(item.image.key);
+            return !!ownerId && ownerId === listSession.userId;
+          })
           .sort((a, b) => a.image.key.localeCompare(b.image.key));
 
         const startIndex = cursorKey
-          ? visibleImages.findIndex(item => item.image.key > cursorKey)
+          ? visibleImages.findIndex((item) => item.image.key > cursorKey)
           : 0;
         const safeStartIndex = startIndex === -1 ? visibleImages.length : startIndex;
 
         const pageItems = visibleImages
           .slice(safeStartIndex, safeStartIndex + limit)
-          .map(item => buildListResponseItem(item.image, item.metadata, listSession));
+          .map((item) => buildListResponseItem(item.image, item.metadata, listSession));
 
         const hasMore = safeStartIndex + limit < visibleImages.length;
         const nextCursor = hasMore && pageItems.length > 0
           ? encodeCursorFromKey(pageItems[pageItems.length - 1].key)
           : '';
-
-        if (metadataChanged) {
-          await saveMetadata(config, metadata);
-        }
 
         return json(200, {
           code: 200,
@@ -700,6 +901,15 @@ export default {
       }
 
       if (action === 'register') {
+        // 检查是否允许开放注册
+        if (env.ALLOW_REGISTRATION === 'false') {
+          // 如果关闭了开放注册，则只有 admin 可以创建新用户
+          const session = await resolveSession(authHeader, env);
+          if (!session || session.role !== 'admin') {
+            return json(403, { error: '注册功能已关闭，请联系管理员' });
+          }
+        }
+
         if (request.method !== 'POST') {
           return json(405, { code: 405, message: 'register 仅支持 POST' });
         }
@@ -866,7 +1076,7 @@ export default {
           return json(400, { code: 400, message: inputError });
         }
 
-        const upload = await getUploadSignature(config, scopedKey, contentType);
+        const upload = await getUploadSignature(config, scopedKey, contentType, sizeBytes);
         return json(200, { code: 200, key: scopedKey, ...upload });
       }
 
@@ -889,12 +1099,20 @@ export default {
           return json(authResult.code, { code: authResult.code, message: authResult.message });
         }
 
-        const metadata = await getMetadata(config);
         const key = url.searchParams.get('key');
 
         if (key) {
-          return json(200, { code: 200, metadata: metadata[key] || {} });
+          const row = await getImageMetadata(env, key);
+          return json(200, { code: 200, metadata: resolveResourceEntryFromRow(row, key) });
         }
+
+        const rows = await listAllImageMetadata(env);
+        const metadata = {};
+        rows.forEach((row) => {
+          if (row?.key) {
+            metadata[row.key] = normalizeMetadataEntry(metadataFromDbRow(row));
+          }
+        });
         return json(200, { code: 200, metadata });
       }
 
@@ -908,13 +1126,13 @@ export default {
         const { key, title, tags, expectedVersion } = body;
         if (!key) return json(400, { code: 400, message: '缺少 key 参数' });
 
-        const metadata = await getMetadata(config);
-        const hasExisting = !!metadata[key];
-        const current = resolveResourceEntry(metadata, key);
+        const existingRow = await getImageMetadata(env, key);
+        const hasExisting = !!existingRow;
+        const current = resolveResourceEntryFromRow(existingRow, key);
         const currentStoredVersion = hasExisting ? (Number(current.version) || 1) : 0;
 
         if (!hasExisting) {
-          current.createdAt = new Date().toISOString();
+          current.createdAt = nowIso();
         }
 
         if (!canManageResource(authResult.session, current)) {
@@ -940,13 +1158,12 @@ export default {
         if (title !== undefined) current.title = title;
         if (tags !== undefined) current.tags = Array.isArray(tags) ? tags : [];
         current.visibility = current.visibility || 'private';
-        current.updatedAt = new Date().toISOString();
+        current.updatedAt = nowIso();
         current.version = currentStoredVersion + 1;
 
-        metadata[key] = current;
-        await saveMetadata(config, metadata);
+        await upsertImageMetadata(env, key, current);
 
-        return json(200, { code: 200, message: '元数据已更新', metadata: metadata[key] });
+        return json(200, { code: 200, message: '元数据已更新', metadata: current });
       }
 
       if (action === 'deleteMeta') {
@@ -958,11 +1175,7 @@ export default {
         const key = url.searchParams.get('key');
         if (!key) return json(400, { code: 400, message: '缺少 key 参数' });
 
-        const metadata = await getMetadata(config);
-        if (metadata[key]) {
-          delete metadata[key];
-          await saveMetadata(config, metadata);
-        }
+        await deleteImageMetadata(env, key);
 
         return json(200, { code: 200, message: '元数据已删除' });
       }
@@ -980,8 +1193,8 @@ export default {
           return json(400, { code: 400, message: '缺少 oldKey 或 newKey' });
         }
 
-        const metadata = await getMetadata(config);
-        const oldMeta = resolveResourceEntry(metadata, oldKey);
+        const oldRow = await getImageMetadata(env, oldKey);
+        const oldMeta = resolveResourceEntryFromRow(oldRow, oldKey);
 
         if (!canManageResource(authResult.session, oldMeta)) {
           return json(403, { code: 403, message: '无权限移动该图片' });
@@ -1013,15 +1226,14 @@ export default {
 
         // 更新元数据
         const nextUserId = oldMeta.userId || oldMeta.ownerId || extractUserIdFromKey(scopedNewKey);
-        metadata[scopedNewKey] = {
+        await upsertImageMetadata(env, scopedNewKey, {
           ...oldMeta,
           userId: nextUserId,
           ownerId: nextUserId,
-          updatedAt: new Date().toISOString(),
+          updatedAt: nowIso(),
           version: (Number(oldMeta.version) || 0) + 1
-        };
-        delete metadata[oldKey];
-        await saveMetadata(config, metadata);
+        });
+        await deleteImageMetadata(env, oldKey);
 
         return json(200, {
           code: 200,
@@ -1032,7 +1244,7 @@ export default {
       }
 
       if (action === 'deleteImage') {
-        const authResult = await requireSession(authHeader, env, ['user', 'admin']);
+        const authResult = await requireSession(authHeader, env, ['admin']);
         if (!authResult.ok) {
           return json(authResult.code, { code: authResult.code, message: authResult.message });
         }
@@ -1040,8 +1252,8 @@ export default {
         const key = url.searchParams.get('key');
         if (!key) return json(400, { code: 400, message: '缺少 key 参数' });
 
-        const metadata = await getMetadata(config);
-        const entry = resolveResourceEntry(metadata, key);
+        const entryRow = await getImageMetadata(env, key);
+        const entry = resolveResourceEntryFromRow(entryRow, key);
 
         if (!canManageResource(authResult.session, entry)) {
           return json(403, { code: 403, message: '无权限删除该图片' });
@@ -1052,10 +1264,7 @@ export default {
           return json(500, { code: 500, message: '删除图片失败' });
         }
 
-        if (metadata[key]) {
-          delete metadata[key];
-          await saveMetadata(config, metadata);
-        }
+        await deleteImageMetadata(env, key);
 
         return json(200, { code: 200, message: '图片已删除' });
       }

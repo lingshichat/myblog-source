@@ -146,14 +146,16 @@
 
 ### 结果
 
-- D1 `users/sessions` 已接入
+- D1 `users/sessions` 已接入（已创建 `gallery_auth` 数据库并绑定到生产环境）
 - 认证接口已上线（`register/login/me/logout`）
 - 写接口已统一 session 鉴权
 - 前端统一认证入口与会话恢复已完成
+- 修复了前端旧版 Token 残留导致的“假登录”问题（增加了启动时 `/me` 静默校验）
+- 确认了当前仅个人开发，暂不创建 staging 环境，直接在线上验证
 
 ### 验收结论
 
-- Public 调用写接口被拒绝
+- Public 调用写接口被拒绝（且前端不再误显上传 FAB）
 - User 只能管理自己的资源
 - Admin 可管理全量资源
 
