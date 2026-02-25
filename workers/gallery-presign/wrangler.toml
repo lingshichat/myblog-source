@@ -5,6 +5,11 @@ compatibility_date = "2024-01-01"
 # 默认启用 workers.dev 便于灰度验证
 workers_dev = true
 
+# 自定义域名路由（替代 workers.dev，国内可直连）
+routes = [
+  { pattern = "api-gallery.lingshichat.top/*", zone_name = "lingshichat.top" }
+]
+
 # =============================
 # Secret 配置（命令行注入）
 # =============================
