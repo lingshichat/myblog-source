@@ -419,6 +419,34 @@ CREATE INDEX idx_images_owner_id ON images(owner_id);
 
 ## 7. 开发日志 / 变更记录
 
+### 2026-02-25 缩略图修复 / 邀请码注册 / 管理员面板 / 自定义域名
+
+**缩略图模糊修复**：
+- 根因：浏览器原生 `loading="lazy"` 与自定义 `IntersectionObserver` 双重懒加载冲突，`.is-loaded` 类始终未触发
+- 修复：移除原生 lazy 属性，`src` 改为 1px 透明占位 GIF，完全由 JS 控制加载时机
+- 文件：`index.html`（移除 `loading="lazy"`）、`gallery.js`（新增 `lazyPlaceholder` + 简化 `onLazyImageLoad`）
+
+**"我的"标签图片归属修复**：
+- 根因：`sign` action 不写 D1 元数据 → 无 `userId` → `extractUserIdFromKey` 回退到 `ADMIN_OWNER_ID` → 与用户真实 `usr_xxx` ID 不匹配
+- 修复：`sign` 成功后自动 upsert D1 元数据绑定上传者 `userId`；`mine` 过滤逻辑兼容 admin 查看 `ADMIN_OWNER_ID` 归属图片
+
+**邀请码注册机制**：
+- D1 新增 `invitations` 表（`0003_invitations.sql`）
+- `register` action 改为邀请码验证模式（管理员可免码）
+- 注册成功后自动消耗邀请码使用次数
+- 前端注册弹窗新增邀请码输入框
+
+**管理员控制中心**：
+- Worker 新增 5 个 admin API：`adminListUsers`、`adminUpdateUser`、`adminListInvites`、`adminCreateInvite`、`adminUpdateInvite`
+- 前端新增管理员面板弹窗（导航栏 🛡️ 按钮触发），包含「用户管理」和「邀请码管理」两个 Tab
+- 用户管理：角色切换（user↔admin）、禁用/启用，禁止修改自己
+- 邀请码管理：生成、复制、禁用/启用，显示使用次数
+
+**Worker 自定义域名**：
+- `wrangler.toml` 添加 `routes`：`api-gallery.lingshichat.top/*`
+- `gallery.js` 的 `WORKER_URL` 切换到自定义域名
+- Cloudflare DNS 需添加 `AAAA api-gallery → 100::` 代理记录
+
 ### 2026-02-25 安全加固与性能优化
 
 | 优先级 | 修复项 | 说明 |
@@ -528,10 +556,11 @@ npm run tail
 | [`workers/gallery-presign/wrangler.toml`](workers/gallery-presign/wrangler.toml) | 部署配置 |
 | [`workers/gallery-presign/migrations/0001_auth_init.sql`](workers/gallery-presign/migrations/0001_auth_init.sql) | 用户与会话表迁移 |
 | [`workers/gallery-presign/migrations/0002_images_metadata.sql`](workers/gallery-presign/migrations/0002_images_metadata.sql) | 图片元数据表迁移 |
+| [`workers/gallery-presign/migrations/0003_invitations.sql`](workers/gallery-presign/migrations/0003_invitations.sql) | 邀请码表迁移 |
 | [`source/gallery/gallery.js`](source/gallery/gallery.js) | 前端核心逻辑 |
 | [`source/gallery/gallery.css`](source/gallery/gallery.css) | 前端样式 |
 | [`source/gallery/index.html`](source/gallery/index.html) | 前端页面 |
 
 ---
 
-*文档最后更新：2026-02-25*
+*文档最后更新：2026-02-25 22:48*
