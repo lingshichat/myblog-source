@@ -88,6 +88,13 @@ function randomId(prefix) {
   return `${prefix}_${randomHex(8)}`;
 }
 
+function randomInviteCode() {
+  // 生成 8 位大写字母+数字邀请码
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return Array.from(bytes).map(b => chars[b % chars.length]).join('');
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -442,27 +449,27 @@ async function createSignature(config, method, path, queryParams, headers, bodyH
   const now = new Date();
   const dateStamp = now.toISOString().slice(0, 10).replace(/-/g, '');
   const amzDate = now.toISOString().slice(0, 19).replace(/[-:]/g, '') + 'Z';
-  
+
   const canonicalQS = Object.entries(queryParams)
     .filter(([, v]) => v !== undefined && v !== null)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
     .join('&');
-  
+
   const headerEntries = Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v.trim()]);
   headerEntries.sort(([a], [b]) => a.localeCompare(b));
   const signedHeadersList = headerEntries.map(([k]) => k).join(';');
   const canonicalHeaders = headerEntries.map(([k, v]) => `${k}:${v}\n`).join('');
-  
+
   const canonicalRequest = [method, path, canonicalQS, canonicalHeaders, signedHeadersList, bodyHash].join('\n');
-  
+
   const credentialScope = `${dateStamp}/${config.region}/s3/aws4_request`;
   const stringToSign = ['AWS4-HMAC-SHA256', amzDate, credentialScope, await sha256(canonicalRequest)].join('\n');
-  
+
   const signingKey = await getSigningKey(config.secretKey, dateStamp, config.region);
   const signature = await hmac(signingKey, stringToSign);
   const signatureHex = Array.from(signature).map(b => b.toString(16).padStart(2, '0')).join('');
-  
+
   return {
     authorization: `AWS4-HMAC-SHA256 Credential=${config.accessKey}/${credentialScope}, SignedHeaders=${signedHeadersList}, Signature=${signatureHex}`,
     amzDate
@@ -478,11 +485,11 @@ async function s3Get(config, key) {
   const headers = { Host: host, 'x-amz-content-sha256': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' };
   const encodedPath = encodeS3Path(key);
   const sig = await createSignature(config, 'GET', `/${encodedPath}`, {}, headers, headers['x-amz-content-sha256']);
-  
+
   const res = await fetch(`https://${host}/${encodedPath}`, {
     headers: { Authorization: sig.authorization, 'x-amz-date': sig.amzDate, 'x-amz-content-sha256': headers['x-amz-content-sha256'] }
   });
-  
+
   return res;
 }
 
@@ -492,13 +499,13 @@ async function s3Put(config, key, body, contentType) {
   const headers = { Host: host, 'x-amz-content-sha256': bodyHash, 'Content-Type': contentType };
   const encodedPath = encodeS3Path(key);
   const sig = await createSignature(config, 'PUT', `/${encodedPath}`, {}, headers, bodyHash);
-  
+
   const res = await fetch(`https://${host}/${encodedPath}`, {
     method: 'PUT',
     headers: { Authorization: sig.authorization, 'x-amz-date': sig.amzDate, 'x-amz-content-sha256': bodyHash, 'Content-Type': contentType },
     body
   });
-  
+
   return res;
 }
 
@@ -507,23 +514,23 @@ async function s3Delete(config, key) {
   const headers = { Host: host, 'x-amz-content-sha256': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' };
   const encodedPath = encodeS3Path(key);
   const sig = await createSignature(config, 'DELETE', `/${encodedPath}`, {}, headers, headers['x-amz-content-sha256']);
-  
+
   const res = await fetch(`https://${host}/${encodedPath}`, {
     method: 'DELETE',
     headers: { Authorization: sig.authorization, 'x-amz-date': sig.amzDate, 'x-amz-content-sha256': headers['x-amz-content-sha256'] }
   });
-  
+
   return res;
 }
 
 async function listImages(config, prefix, maxKeys = 1000) {
   const queryParams = { 'list-type': '2', prefix, 'max-keys': maxKeys.toString() };
   const headers = { Host: `${config.bucket}.s3.bitiful.net`, 'x-amz-content-sha256': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' };
-  
+
   const sig = await createSignature(config, 'GET', '/', queryParams, headers, headers['x-amz-content-sha256']);
-  
+
   const url = `https://${config.bucket}.s3.bitiful.net/?list-type=2&prefix=${encodeURIComponent(prefix)}&max-keys=${maxKeys}`;
-  
+
   const res = await fetch(url, {
     headers: {
       Authorization: sig.authorization,
@@ -531,9 +538,9 @@ async function listImages(config, prefix, maxKeys = 1000) {
       'x-amz-content-sha256': headers['x-amz-content-sha256']
     }
   });
-  
+
   if (!res.ok) throw new Error(`S3 错误: ${res.status}`);
-  
+
   const xml = await res.text();
   return parseImages(xml, config.publicUrl);
 }
@@ -541,13 +548,13 @@ async function listImages(config, prefix, maxKeys = 1000) {
 function parseImages(xml, publicUrl) {
   const exts = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg', '.bmp'];
   const images = [];
-  
+
   for (const block of xml.split('<Contents>').slice(1)) {
     const key = block.match(/<Key>([^<]+)<\/Key>/)?.[1];
     if (!key) continue;
     if (key.endsWith('_metadata.json')) continue; // 跳过元数据文件
     if (!exts.some(e => key.toLowerCase().endsWith(e))) continue;
-    
+
     images.push({
       key,
       name: key.split('/').pop(),
@@ -559,7 +566,7 @@ function parseImages(xml, publicUrl) {
       blurhashUrl: `${publicUrl}/${key}?fmt=blurhash`
     });
   }
-  
+
   return images.sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified));
 }
 
@@ -573,7 +580,7 @@ async function getUploadSignature(config, key, contentType, sizeBytes) {
     'Content-Length': String(sizeBytes)
   };
   const sig = await createSignature(config, 'PUT', `/${encodedKey}`, {}, headers, 'UNSIGNED-PAYLOAD');
-  
+
   return {
     url: `https://${host}/${encodedKey}`,
     headers: {
@@ -591,7 +598,7 @@ async function getDeleteSignature(config, key) {
   const encodedKey = encodeS3Path(key);
   const headers = { Host: host, 'x-amz-content-sha256': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' };
   const sig = await createSignature(config, 'DELETE', `/${encodedKey}`, {}, headers, headers['x-amz-content-sha256']);
-  
+
   return {
     url: `https://${host}/${encodedKey}`,
     headers: {
@@ -870,7 +877,11 @@ export default {
               return true;
             }
             const ownerId = item.metadata.userId || item.metadata.ownerId || extractUserIdFromKey(item.image.key);
-            return !!ownerId && ownerId === listSession.userId;
+            // 直接匹配 userId
+            if (!!ownerId && ownerId === listSession.userId) return true;
+            // admin 用户也应看到归属为 ADMIN_OWNER_ID 的历史图片
+            if (listSession.role === 'admin' && ownerId === ADMIN_OWNER_ID) return true;
+            return false;
           })
           .sort((a, b) => a.image.key.localeCompare(b.image.key));
 
@@ -901,27 +912,46 @@ export default {
       }
 
       if (action === 'register') {
-        // 检查是否允许开放注册
-        if (env.ALLOW_REGISTRATION === 'false') {
-          // 如果关闭了开放注册，则只有 admin 可以创建新用户
-          const session = await resolveSession(authHeader, env);
-          if (!session || session.role !== 'admin') {
-            return json(403, { error: '注册功能已关闭，请联系管理员' });
-          }
-        }
-
         if (request.method !== 'POST') {
           return json(405, { code: 405, message: 'register 仅支持 POST' });
         }
         const body = await request.json();
         const email = normalizeEmail(body?.email);
         const password = String(body?.password || '');
+        const inviteCode = String(body?.inviteCode || '').trim().toUpperCase();
 
         if (!isValidEmail(email)) {
           return json(400, { code: 400, message: '邮箱格式不正确' });
         }
         if (!isStrongEnoughPassword(password)) {
           return json(400, { code: 400, message: '密码长度需为 8-128 位' });
+        }
+
+        // 邀请码验证（管理员可免邀请码）
+        const callerSession = await resolveSession(authHeader, env);
+        const isAdminCaller = callerSession && callerSession.role === 'admin';
+
+        if (!isAdminCaller) {
+          if (!inviteCode) {
+            return json(400, { code: 400, message: '请输入邀请码' });
+          }
+          const db = ensureDb(env);
+          const invite = await db.prepare(
+            'SELECT * FROM invitations WHERE code = ? LIMIT 1'
+          ).bind(inviteCode).first();
+
+          if (!invite) {
+            return json(400, { code: 400, message: '邀请码无效' });
+          }
+          if (invite.status !== 'active') {
+            return json(400, { code: 400, message: '该邀请码已被禁用' });
+          }
+          if (invite.max_uses > 0 && invite.used_count >= invite.max_uses) {
+            return json(400, { code: 400, message: '该邀请码已达使用上限' });
+          }
+          if (invite.expires_at && invite.expires_at <= nowIso()) {
+            return json(400, { code: 400, message: '该邀请码已过期' });
+          }
         }
 
         const db = ensureDb(env);
@@ -937,6 +967,13 @@ export default {
           INSERT INTO users (id, email, password_hash, role, status, created_at, updated_at)
           VALUES (?, ?, ?, 'user', 'active', ?, ?)
         `).bind(userId, email, passwordHash, now, now).run();
+
+        // 消耗邀请码使用次数
+        if (!isAdminCaller && inviteCode) {
+          await db.prepare(
+            'UPDATE invitations SET used_count = used_count + 1 WHERE code = ?'
+          ).bind(inviteCode).run();
+        }
 
         return json(200, { code: 200, message: '注册成功' });
       }
@@ -1077,6 +1114,28 @@ export default {
         }
 
         const upload = await getUploadSignature(config, scopedKey, contentType, sizeBytes);
+
+        // 自动为上传的图片创建 D1 元数据，绑定上传者 userId
+        try {
+          const session = authResult.session;
+          const existingMeta = await getImageMetadata(env, scopedKey);
+          if (!existingMeta) {
+            await upsertImageMetadata(env, scopedKey, {
+              title: '',
+              tags: [],
+              userId: String(session.userId),
+              ownerId: String(session.userId),
+              createdByRole: session.role,
+              visibility: 'private',
+              createdAt: nowIso(),
+              updatedAt: nowIso(),
+              version: 1
+            });
+          }
+        } catch (metaErr) {
+          console.warn('自动创建上传元数据失败（不影响上传）:', metaErr);
+        }
+
         return json(200, { code: 200, key: scopedKey, ...upload });
       }
 
@@ -1267,6 +1326,129 @@ export default {
         await deleteImageMetadata(env, key);
 
         return json(200, { code: 200, message: '图片已删除' });
+      }
+
+      // ============================================
+      // 管理员 API
+      // ============================================
+
+      if (action === 'adminListUsers') {
+        const authResult = await requireSession(authHeader, env, ['admin']);
+        if (!authResult.ok) {
+          return json(authResult.code, { code: authResult.code, message: authResult.message });
+        }
+        const db = ensureDb(env);
+        const result = await db.prepare(`
+          SELECT id, email, role, status, created_at AS createdAt, updated_at AS updatedAt, last_login_at AS lastLoginAt
+          FROM users ORDER BY created_at DESC
+        `).all();
+        return json(200, { code: 200, data: result?.results || [] });
+      }
+
+      if (action === 'adminUpdateUser') {
+        const authResult = await requireSession(authHeader, env, ['admin']);
+        if (!authResult.ok) {
+          return json(authResult.code, { code: authResult.code, message: authResult.message });
+        }
+        const body = await request.json();
+        const targetId = String(body?.userId || '').trim();
+        if (!targetId) return json(400, { code: 400, message: '缺少 userId' });
+
+        // 禁止修改自己
+        if (targetId === authResult.session.userId) {
+          return json(400, { code: 400, message: '不能修改自己的角色或状态' });
+        }
+
+        const db = ensureDb(env);
+        const updates = [];
+        const values = [];
+        if (body.role && ['user', 'admin'].includes(body.role)) {
+          updates.push('role = ?');
+          values.push(body.role);
+        }
+        if (body.status && ['active', 'disabled'].includes(body.status)) {
+          updates.push('status = ?');
+          values.push(body.status);
+        }
+        if (updates.length === 0) {
+          return json(400, { code: 400, message: '无有效的更新字段' });
+        }
+        updates.push('updated_at = ?');
+        values.push(nowIso());
+        values.push(targetId);
+
+        await db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).bind(...values).run();
+        return json(200, { code: 200, message: '用户信息已更新' });
+      }
+
+      if (action === 'adminListInvites') {
+        const authResult = await requireSession(authHeader, env, ['admin']);
+        if (!authResult.ok) {
+          return json(authResult.code, { code: authResult.code, message: authResult.message });
+        }
+        const db = ensureDb(env);
+        const result = await db.prepare(`
+          SELECT i.code, i.creator_id AS creatorId, i.max_uses AS maxUses,
+                 i.used_count AS usedCount, i.status, i.expires_at AS expiresAt,
+                 i.created_at AS createdAt, u.email AS creatorEmail
+          FROM invitations i
+          LEFT JOIN users u ON u.id = i.creator_id
+          ORDER BY i.created_at DESC
+        `).all();
+        return json(200, { code: 200, data: result?.results || [] });
+      }
+
+      if (action === 'adminCreateInvite') {
+        const authResult = await requireSession(authHeader, env, ['admin']);
+        if (!authResult.ok) {
+          return json(authResult.code, { code: authResult.code, message: authResult.message });
+        }
+        const body = await request.json();
+        const maxUses = Number(body?.maxUses);
+        const safeMaxUses = Number.isFinite(maxUses) && maxUses >= -1 ? maxUses : 1;
+
+        const db = ensureDb(env);
+        const code = randomInviteCode();
+        const now = nowIso();
+        const expiresAt = body?.expiresAt || null;
+
+        await db.prepare(`
+          INSERT INTO invitations (code, creator_id, max_uses, used_count, status, expires_at, created_at)
+          VALUES (?, ?, ?, 0, 'active', ?, ?)
+        `).bind(code, authResult.session.userId, safeMaxUses, expiresAt, now).run();
+
+        return json(200, { code: 200, data: { code, maxUses: safeMaxUses, expiresAt } });
+      }
+
+      if (action === 'adminUpdateInvite') {
+        const authResult = await requireSession(authHeader, env, ['admin']);
+        if (!authResult.ok) {
+          return json(authResult.code, { code: authResult.code, message: authResult.message });
+        }
+        const body = await request.json();
+        const inviteCode = String(body?.code || '').trim();
+        if (!inviteCode) return json(400, { code: 400, message: '缺少邀请码' });
+
+        const db = ensureDb(env);
+        const updates = [];
+        const values = [];
+        if (body.status && ['active', 'disabled'].includes(body.status)) {
+          updates.push('status = ?');
+          values.push(body.status);
+        }
+        if (body.maxUses !== undefined) {
+          const mu = Number(body.maxUses);
+          if (Number.isFinite(mu) && mu >= -1) {
+            updates.push('max_uses = ?');
+            values.push(mu);
+          }
+        }
+        if (updates.length === 0) {
+          return json(400, { code: 400, message: '无有效的更新字段' });
+        }
+        values.push(inviteCode);
+        await db.prepare(`UPDATE invitations SET ${updates.join(', ')} WHERE code = ?`).bind(...values).run();
+        return json(200, { code: 200, message: '邀请码已更新' });
       }
 
       return json(400, { code: 400, message: '未知 action' });
