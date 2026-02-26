@@ -7,3 +7,9 @@ public/
 .deploy*/
 _multiconfig.yml
 .agent/config.md
+.agent/PROJECT_MEMORY.md
+CLAUDE.md
+.sisyphus/drafts/memory-strategy.md
+.sisyphus/plans/memory-architecture.md
+.sisyphus/plans/memory-deployment-summary.md
+source/opencode/channels.js
