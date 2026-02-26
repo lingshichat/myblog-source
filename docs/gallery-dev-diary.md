@@ -330,11 +330,18 @@ S3_REGION = "cn-east-1"
 S3_BUCKET = "lingshichat"
 ALLOW_REGISTRATION = "false"  # 关闭开放注册
 CORS_ORIGINS = "https://lingshichat.top,https://www.lingshichat.top"
+IMG_PROXY_URL = "https://img.lingshichat.top"
 
 # 敏感配置（通过 wrangler secret put）
 # - SESSION_SECRET: 会话签名密钥
 # - S3_ACCESS_KEY: S3 访问密钥
 # - S3_SECRET_KEY: S3 私钥
+
+# 注意：wrangler 的 vars 不会自动继承到 env.production/env.staging
+# 生产环境需在 [env.production.vars] 中显式配置：
+# - ALLOW_REGISTRATION
+# - CORS_ORIGINS
+# - IMG_PROXY_URL
 ```
 
 ### 5.2 前端配置常量
@@ -343,10 +350,10 @@ CORS_ORIGINS = "https://lingshichat.top,https://www.lingshichat.top"
 
 ```javascript
 const CONFIG = {
-  WORKER_URL: 'https://gallery-presign.lingshichat.workers.dev',
-  PAGE_SIZE: 50,
-  ALLOWED_TYPES: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-  MAX_FILE_SIZE: 10 * 1024 * 1024  // 10MB
+  WORKER_URL: 'https://api-gallery.lingshichat.top',
+  S3_PUBLIC_URL: 'https://img.lingshichat.top',
+  IMAGE_BASE_PREFIX: 'img/gallery/',
+  THUMBNAIL_PARAMS: '?w=400&q=80&f=webp'
 };
 ```
 
@@ -418,6 +425,121 @@ CREATE INDEX idx_images_owner_id ON images(owner_id);
 ---
 
 ## 7. 开发日志 / 变更记录
+
+### 2026-02-27 Cloudflare 图片代理防盗链改造（上线）
+
+**目标**：避免 AI 爬虫/盗链直接打穿公开 S3 URL，收敛流量风险。
+
+**本次架构调整**：
+1. 新增图片代理域名链路：`img.lingshichat.top/img/gallery/*`
+2. 由 `gallery-presign` Worker 接管图片读取代理（含缩略图参数透传）
+3. 图片列表返回 URL 切换为代理域名（通过 `IMG_PROXY_URL` 控制）
+4. `source/gallery/gallery.js` 的 `S3_PUBLIC_URL` 切换到 `https://img.lingshichat.top`
+5. `wrangler.toml` 新增 route：`img.lingshichat.top/img/gallery/*`
+
+**Worker 代理侧防护**：
+- 路径白名单：仅允许 `/img/gallery/*`
+- Referer 校验：仅允许 `lingshichat.top / www.lingshichat.top / localhost`
+- User-Agent 黑名单：拦截 `GPTBot/CCBot/anthropic-ai/Bytespider` 等
+- S3 请求改为签名 GET（避免直接裸链读取逻辑漂移）
+
+**Cloudflare WAF 最终策略（踩坑后收敛）**：
+1. **Challenge 放在页面入口**：`/gallery/`（顶层导航请求）
+2. **不要对图片子资源直接做 Challenge**：会触发浏览器 `ERR_BLOCKED_BY_RESPONSE.NotSameOrigin`
+3. 图片域名侧以 `Referer + Rate Limit + UA 黑名单` 为主
+
+**故障记录与修复**：
+- 故障1：`api-gallery` 出现 CORS 缺失（`No 'Access-Control-Allow-Origin'`）
+  - 根因：`env.production.vars` 未显式声明 `CORS_ORIGINS`
+  - 修复：在生产 vars 补齐 `ALLOW_REGISTRATION/CORS_ORIGINS/IMG_PROXY_URL`
+- 故障2：缩略图批量 `NotSameOrigin`
+  - 根因：对 `img` 子资源触发 Cloudflare Challenge（挑战页为 same-origin）
+  - 修复：将 Challenge 调整到 `/gallery/` 页面入口
+
+**结果**：
+- Gallery 页面与缩略图恢复正常
+- 图片请求统一进入 Cloudflare + Worker 防护链
+- 对“公开桶 + 直链被扫”的风险有显著缓解
+
+### 2026-02-26 UI/UX 焕新与移动端优化
+
+**设计升级**：
+1. **标题焕新**：网站标题改为 "Lingshi's Gallery"，使用 Google Fonts `Dancing Script` 花体字体，纯白色搭配图标
+2. **悬浮胶囊分类栏**：参考博客主站导航栏的交互模式
+   - 向下滚动自动收起，向上滚动自动展开
+   - 垂直中心线精确压在导航栏底边（视觉融合效果）
+   - 胶囊玻璃态设计：半透明背景、模糊、圆角 50px、悬浮阴影
+   - 使用 `clamp()` 实现响应式缩放手感（padding、字体、间距随视口平滑缩放）
+3. **Toast 修复**：高度从 470px 降至 38px，改用胶囊样式与顶部定位
+4. **移动端适配**：
+   - 600px 以下改为左右 12px 边距，内容横向滚动（不再居中裁切）
+   - `top` 调整至导航栏下方（64px），避免遮挡标题
+   - 更紧凑的按钮尺寸与字体（通过 `clamp()` 自动缩放）
+   - iPhone X+ 安全区域适配（刘海/底部横条）
+
+**交互优化**：
+- 移动端图片覆盖层（文件名/复制/编辑按钮）默认隐藏
+- 新增长按（300ms）触发展示，松手 2 秒后自动消失
+- 避免触摸设备上的误触，提升浏览体验
+
+**技术细节**：
+- JS 动态计算导航栏高度问题已解决（使用 `transform` 避免布局跳动）
+- 定位策略从 `left: 50% + translateX(-50%)` 调整为移动端的 `left/right` 固定边距
+- 清理了多处的重复 media query 规则（480px 与 600px 冲突）
+
+---
+
+### 2026-02-26 安全评估与防护加固
+
+**风险评估**：
+- 缤纷云存储桶为公开状态，任何人拿到图片 URL 可直接访问
+- 存在盗链风险（他人引用图片 URL，流量费由桶主承担）
+- 爬虫可批量抓取，ListBucket 未限制
+- Worker 的 RBAC 鉴权在公开桶下形同虚设（绕过 Worker 直接访问 S3 URL 即可）
+- AI 爬虫（GPTBot、CCBot 等）可能批量抓取用于训练
+
+**方案评估**：
+
+| 方案 | 优点 | 缺点 | 适用性 |
+|------|------|------|--------|
+| S3 预签名 GET URL | 最安全，URL 有时效 | 每次 list 需计算签名；主站静态图片无法直链 | 图床专用 |
+| 缤纷云 CDN + 高级防盗链 | 国内不减速，缩略图可用，签名轻量(MD5) | 需要域名备案 | ❌ 域名未备案 |
+| Cloudflare CDN | 免费，全球加速 | 国内绕海外节点，延迟翻倍(~300ms+) | ❌ 国内用户为主 |
+| Worker 代理回源 | 完全控制访问 | Worker 消耗带宽，增加延迟 | 备选 |
+| Referer 防盗链 | 零延迟，配置简单 | Referer 可伪造，但能挡99%盗链 | ✅ 最佳平衡 |
+
+**最终决策：多层防护（桶保持公开）**
+
+理由：
+1. 域名未备案，无法使用缤纷云 CDN 的高级防盗链
+2. 主站背景图/封面图需要直链访问，私有桶会导致 403
+3. 多层防护叠加可有效阻止绝大多数攻击
+4. 零延迟，不影响现有架构
+
+**已配置的防护措施**：
+
+| 防护层 | 手段 | 配置位置 | 挡住什么 |
+|--------|------|----------|----------|
+| Referer 白名单 | 只允许 `lingshichat.top`、`localhost` | 缤纷云控制台 | 浏览器直接盗链、普通爬虫 |
+| User-Agent 黑名单 | 拦截 GPTBot/CCBot/anthropic-ai/Bytespider 等 | Worker 代码 | 已知 AI 爬虫 |
+| Zone Rate Limiting | 50次/10秒 超限阻止 | Cloudflare WAF | 恶意高频请求、DDoS |
+| RBAC 鉴权 | Worker 层角色权限校验 | Worker 代码 | 未授权访问写接口 |
+
+**User-Agent 黑名单（worker.js）**：
+- `GPTBot`, `ChatGPT` — OpenAI
+- `CCBot` — Common Crawl
+- `anthropic-ai`, `Claude-Web` — Anthropic
+- `Bytespider` — 字节跳动（抖音/TikTok 爬虫）
+- `FacebookBot` — Facebook
+
+**缤纷云控制台配置**：
+- Referer 白名单：`lingshichat.top`、`*.lingshichat.top`、`localhost`
+- 空 Referer：拒绝（防止直接访问）
+
+**Cloudflare WAF 配置**：
+- Zone Rate Limiting：50 请求/10秒 → Block
+
+---
 
 ### 2026-02-25 缩略图修复 / 邀请码注册 / 管理员面板 / 自定义域名
 
@@ -563,4 +685,4 @@ npm run tail
 
 ---
 
-*文档最后更新：2026-02-25 22:48*
+*文档最后更新：2026-02-27 00:20*

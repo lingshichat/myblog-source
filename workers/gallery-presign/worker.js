@@ -803,11 +803,153 @@ async function migrateMetadataFromS3(config, env) {
 }
 
 // ============================================
+// 图片代理函数
+// ============================================
+
+async function handleImageProxy(request, env) {
+  const url = new URL(request.url);
+  const pathname = url.pathname;
+  const objectKey = pathname.replace(/^\/+/, '');
+  
+  // 只允许 /img/gallery/ 路径
+  if (!pathname.startsWith('/img/gallery/')) {
+    return new Response('Not Found', { status: 404 });
+  }
+  
+  // 检查 Referer（防盗链）
+  const referer = request.headers.get('Referer') || '';
+  const allowedReferers = ['lingshichat.top', 'www.lingshichat.top', 'localhost'];
+  const isAllowedReferer = !referer || allowedReferers.some(r => referer.includes(r));
+  
+  if (!isAllowedReferer) {
+    return new Response('Forbidden: Invalid Referer', {
+      status: 403,
+      headers: {
+        'Cross-Origin-Resource-Policy': 'cross-origin',
+        'Content-Type': 'text/plain; charset=utf-8'
+      }
+    });
+  }
+  
+  // User-Agent 黑名单
+  const userAgent = request.headers.get('User-Agent') || '';
+  const blockedBots = ['GPTBot', 'ChatGPT', 'CCBot', 'anthropic-ai', 'Claude-Web', 'Bytespider', 'FacebookBot'];
+  if (blockedBots.some(bot => userAgent.includes(bot))) {
+    return new Response('Forbidden', {
+      status: 403,
+      headers: {
+        'Cross-Origin-Resource-Policy': 'cross-origin',
+        'Content-Type': 'text/plain; charset=utf-8'
+      }
+    });
+  }
+  
+  // 使用签名请求 S3
+  const config = {
+    endpoint: env.S3_ENDPOINT,
+    region: env.S3_REGION,
+    bucket: env.S3_BUCKET,
+    accessKey: env.S3_ACCESS_KEY,
+    secretKey: env.S3_SECRET_KEY,
+    publicUrl: `https://${env.S3_BUCKET}.s3.bitiful.net`
+  };
+  
+  try {
+    const s3Response = await s3GetWithParams(config, objectKey, url.search);
+    
+    if (!s3Response.ok) {
+      return new Response('Image Not Found', {
+        status: s3Response.status,
+        headers: {
+          'Cross-Origin-Resource-Policy': 'cross-origin',
+          'Content-Type': 'text/plain; charset=utf-8'
+        }
+      });
+    }
+    
+    // 获取图片数据
+    const imageData = await s3Response.arrayBuffer();
+    const contentType = s3Response.headers.get('Content-Type') || 'image/jpeg';
+    
+    // 返回图片，带缓存控制
+    return new Response(imageData, {
+      status: 200,
+      headers: {
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=31536000, immutable',
+        'CDN-Cache-Control': 'public, max-age=31536000',
+        'Cross-Origin-Resource-Policy': 'cross-origin'
+      }
+    });
+  } catch (error) {
+    console.error('图片代理错误:', error);
+    return new Response('Internal Server Error', {
+      status: 500,
+      headers: {
+        'Cross-Origin-Resource-Policy': 'cross-origin',
+        'Content-Type': 'text/plain; charset=utf-8'
+      }
+    });
+  }
+}
+
+// 带查询参数的 S3 GET 请求（支持 CoreIX 图片处理）
+async function s3GetWithParams(config, key, queryString) {
+  const host = `${config.bucket}.s3.bitiful.net`;
+  const headers = { Host: host, 'x-amz-content-sha256': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' };
+  const encodedPath = encodeS3Path(key);
+  
+  // 解析查询参数
+  const queryParams = {};
+  if (queryString) {
+    const searchParams = new URLSearchParams(queryString.slice(1));
+    for (const [k, v] of searchParams) {
+      queryParams[k] = v;
+    }
+  }
+  
+  const sig = await createSignature(config, 'GET', `/${encodedPath}`, queryParams, headers, headers['x-amz-content-sha256']);
+  
+  // 构建带查询参数的 URL
+  let fullUrl = `https://${host}/${encodedPath}`;
+  if (Object.keys(queryParams).length > 0) {
+    const qs = Object.entries(queryParams)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join('&');
+    fullUrl += `?${qs}`;
+  }
+  
+  const res = await fetch(fullUrl, {
+    headers: { 
+      Authorization: sig.authorization, 
+      'x-amz-date': sig.amzDate, 
+      'x-amz-content-sha256': headers['x-amz-content-sha256'],
+      'Host': host
+    }
+  });
+  
+  return res;
+}
+
+// ============================================
 // Main Handler
 // ============================================
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const pathname = url.pathname;
+    
+    // ============================================
+    // 图片代理路由（img.lingshichat.top/img/gallery/*）
+    // ============================================
+    if (pathname.startsWith('/img/gallery/')) {
+      return handleImageProxy(request, env);
+    }
+    
+    // ============================================
+    // API 路由（原有逻辑）
+    // ============================================
     const corsHeaders = getCorsHeaders(request, env);
     const json = (code, data) => {
       const safeCode = Number(code);
@@ -822,8 +964,21 @@ export default {
       return new Response(null, { status: 204, headers: corsHeaders });
     }
 
+    const userAgent = request.headers.get('User-Agent') || '';
+    const blockedBots = ['GPTBot', 'ChatGPT', 'CCBot', 'anthropic-ai', 'Claude-Web', 'Bytespider', 'FacebookBot'];
+    if (blockedBots.some(bot => userAgent.includes(bot))) {
+      return new Response('Forbidden', { status: 403 });
+    }
+
+    if (env.RATE_LIMITER) {
+      const clientIp = request.headers.get('CF-Connecting-IP') || 'unknown';
+      const { success } = await env.RATE_LIMITER.limit({ key: clientIp });
+      if (!success) {
+        return new Response('Too Many Requests', { status: 429, headers: corsHeaders });
+      }
+    }
+
     try {
-      const url = new URL(request.url);
       const action = url.searchParams.get('action') || '';
       const authHeader = request.headers.get('Authorization');
 
@@ -833,7 +988,7 @@ export default {
         bucket: env.S3_BUCKET,
         accessKey: env.S3_ACCESS_KEY,
         secretKey: env.S3_SECRET_KEY,
-        publicUrl: `https://${env.S3_BUCKET}.s3.bitiful.net`
+        publicUrl: env.IMG_PROXY_URL || `https://${env.S3_BUCKET}.s3.bitiful.net`
       };
 
       if (action === 'list') {

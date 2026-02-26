@@ -1,13 +1,15 @@
 name = "gallery-presign"
 main = "worker.js"
 compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
 
 # 默认启用 workers.dev 便于灰度验证
 workers_dev = true
 
 # 自定义域名路由（替代 workers.dev，国内可直连）
 routes = [
-  { pattern = "api-gallery.lingshichat.top/*", zone_name = "lingshichat.top" }
+  { pattern = "api-gallery.lingshichat.top/*", zone_name = "lingshichat.top" },
+  { pattern = "img.lingshichat.top/img/gallery/*", zone_name = "lingshichat.top" }
 ]
 
 # =============================
@@ -38,6 +40,7 @@ S3_REGION = "cn-east-1"
 S3_BUCKET = "lingshichat"
 ALLOW_REGISTRATION = "false"
 CORS_ORIGINS = "https://lingshichat.top,https://www.lingshichat.top"
+IMG_PROXY_URL = "https://img.lingshichat.top"
 
 # D1 数据库绑定（本地/默认）
 # 创建后填入数据库 ID：wrangler d1 create gallery_auth
@@ -57,6 +60,7 @@ workers_dev = true
 S3_ENDPOINT = "https://s3.bitiful.net"
 S3_REGION = "cn-east-1"
 S3_BUCKET = "lingshichat"
+IMG_PROXY_URL = "https://img.lingshichat.top"
 
 [[env.staging.d1_databases]]
 binding = "DB"
@@ -78,6 +82,9 @@ workers_dev = true
 S3_ENDPOINT = "https://s3.bitiful.net"
 S3_REGION = "cn-east-1"
 S3_BUCKET = "lingshichat"
+ALLOW_REGISTRATION = "false"
+CORS_ORIGINS = "https://lingshichat.top,https://www.lingshichat.top"
+IMG_PROXY_URL = "https://img.lingshichat.top"
 
 [[env.production.d1_databases]]
 binding = "DB"
