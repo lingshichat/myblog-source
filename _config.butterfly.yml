@@ -998,7 +998,7 @@ pjax:
   enable: true
   # Exclude the specified pages from pjax, such as '/music/'
   exclude:
-    # - /xxxxxx/
+    - /gallery/
 
 # Inject the css and script (aplayer/meting)
 aplayerInject:

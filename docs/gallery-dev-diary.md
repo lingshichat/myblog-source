@@ -426,6 +426,25 @@ CREATE INDEX idx_images_owner_id ON images(owner_id);
 
 ## 7. 开发日志 / 变更记录
 
+### 2026-02-27 主站导航跳转修复 / 图片代理 403 误拦截修复
+
+**故障 1：主站点击“图床”菜单无跳转**
+- 现象：从主站导航栏点击“图床”后，页面未正常进入 `/gallery/`
+- 根因：主站启用了页面加速切换（PJAX），但 `/gallery/` 作为独立页面未被排除，导致被错误按局部切换流程处理
+- 修复：在 `_config.butterfly.yml` 的 `pjax.exclude` 中新增 `- /gallery/`
+- 验证：主站导航点击“图床”后恢复为整页跳转，稳定进入 `https://lingshichat.top/gallery/`
+
+**故障 2：图片代理 URL 返回 403（Cloudflare 拦截页）**
+- 现象：访问 `https://img.lingshichat.top/img/gallery/...` 返回 403，页面为 Cloudflare `Sorry, you have been blocked`
+- 根因：Cloudflare 昨晚新增的自定义规则误拦截图片子资源请求
+- 关键结论：本次不是缤纷云源站先拒绝，也不是本地 `localhost` 未加白名单导致；拦截发生在 Cloudflare 边缘规则层
+- 修复：调整 Cloudflare Skip 规则范围，确保 `img.lingshichat.top + /img/gallery/*` 的图片读取请求不再命中阻断规则（规则顺序置于阻断规则前）
+- 验证：图片 URL 可正常访问，主站与本地页面均恢复加载
+
+**本次变更涉及**：
+- `_config.butterfly.yml`（新增 `/gallery/` 到 `pjax.exclude`）
+- Cloudflare WAF/Custom Rules（控制台规则调整，无仓库文件变更）
+
 ### 2026-02-27 Cloudflare 图片代理防盗链改造（上线）
 
 **目标**：避免 AI 爬虫/盗链直接打穿公开 S3 URL，收敛流量风险。
@@ -685,4 +704,4 @@ npm run tail
 
 ---
 
-*文档最后更新：2026-02-27 00:20*
+*文档最后更新：2026-02-27 12:35*
