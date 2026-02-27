@@ -679,29 +679,35 @@ async function getImagesMetadataByKeys(env, keys) {
   if (normalizedKeys.length === 0) return new Map();
 
   const db = ensureDb(env);
-  const placeholders = normalizedKeys.map(() => '?').join(',');
-  const sql = `
-    SELECT
-      key,
-      title,
-      tags,
-      user_id AS userId,
-      owner_id AS ownerId,
-      created_by_role AS createdByRole,
-      visibility,
-      created_at AS createdAt,
-      updated_at AS updatedAt,
-      version
-    FROM images
-    WHERE key IN (${placeholders})
-  `;
-  const result = await db.prepare(sql).bind(...normalizedKeys).all();
-  const rows = Array.isArray(result?.results) ? result.results : [];
-
+  const maxKeysPerQuery = 90;
   const metadataMap = new Map();
-  rows.forEach((row) => {
-    metadataMap.set(row.key, row);
-  });
+
+  for (let startIndex = 0; startIndex < normalizedKeys.length; startIndex += maxKeysPerQuery) {
+    const keyBatch = normalizedKeys.slice(startIndex, startIndex + maxKeysPerQuery);
+    const placeholders = keyBatch.map(() => '?').join(',');
+    const sql = `
+      SELECT
+        key,
+        title,
+        tags,
+        user_id AS userId,
+        owner_id AS ownerId,
+        created_by_role AS createdByRole,
+        visibility,
+        created_at AS createdAt,
+        updated_at AS updatedAt,
+        version
+      FROM images
+      WHERE key IN (${placeholders})
+    `;
+    const result = await db.prepare(sql).bind(...keyBatch).all();
+    const rows = Array.isArray(result?.results) ? result.results : [];
+
+    rows.forEach((row) => {
+      metadataMap.set(row.key, row);
+    });
+  }
+
   return metadataMap;
 }
 
