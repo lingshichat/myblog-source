@@ -41,6 +41,8 @@ const PBKDF2_ITERATIONS = 100000;
 const KEY_PREFIX = 'img/gallery/';
 const SIGN_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const SIGN_RATE_LIMIT_MAX = 30;
+// 普通用户每日上传限制（管理员不受限）
+const DAILY_UPLOAD_LIMIT = 30;
 const signRateLimitBucket = new Map();
 
 
@@ -274,6 +276,23 @@ function ensureScopedUploadKey(rawKey, session) {
   return `${KEY_PREFIX}${session.userId}/${relative}`;
 }
 
+/**
+ * 查询用户今日上传图片数（基于 D1 images 表的 created_at 字段）
+ * @param {object} env - Worker 环境变量
+ * @param {string} userId - 用户 ID
+ * @returns {Promise<number>} 今日已上传数量
+ */
+async function getDailyUploadCount(env, userId) {
+  const db = ensureDb(env);
+  // 取 UTC 日期的零点作为当日起始
+  const todayStart = new Date();
+  todayStart.setUTCHours(0, 0, 0, 0);
+  const result = await db.prepare(
+    'SELECT COUNT(*) AS cnt FROM images WHERE user_id = ? AND created_at >= ?'
+  ).bind(userId, todayStart.toISOString()).first();
+  return Number(result?.cnt) || 0;
+}
+
 function hitSignRateLimit(subject) {
   const now = Date.now();
   const key = String(subject || 'anonymous');
@@ -389,6 +408,8 @@ function buildListResponseItem(image, metadata, session) {
     name: image.name,
     url: image.url,
     thumbnailUrl: image.thumbnailUrl,
+    // 极小模糊占位图，供前端进展式加载使用
+    placeholderUrl: image.placeholderUrl,
     size: image.size,
     lastModified: image.lastModified,
     title: metadata.title,
@@ -400,6 +421,7 @@ function buildListResponseItem(image, metadata, session) {
   if (session.role === 'admin') {
     return {
       ...base,
+      isMine: true,
       userId: metadata.userId,
       ownerId: metadata.ownerId,
       createdByRole: metadata.createdByRole,
@@ -407,7 +429,11 @@ function buildListResponseItem(image, metadata, session) {
     };
   }
 
-  return base;
+  // 普通用户：标识图片是否属于自己（用于前端权限控制）
+  const imageOwnerId = metadata.userId || metadata.ownerId || '';
+  const isMine = !!session.userId && imageOwnerId === session.userId;
+
+  return { ...base, isMine };
 }
 
 // ============================================
@@ -816,17 +842,17 @@ async function handleImageProxy(request, env) {
   const url = new URL(request.url);
   const pathname = url.pathname;
   const objectKey = pathname.replace(/^\/+/, '');
-  
+
   // 只允许 /img/gallery/ 路径
   if (!pathname.startsWith('/img/gallery/')) {
     return new Response('Not Found', { status: 404 });
   }
-  
+
   // 检查 Referer（防盗链）
   const referer = request.headers.get('Referer') || '';
   const allowedReferers = ['lingshichat.top', 'www.lingshichat.top', 'localhost'];
   const isAllowedReferer = !referer || allowedReferers.some(r => referer.includes(r));
-  
+
   if (!isAllowedReferer) {
     return new Response('Forbidden: Invalid Referer', {
       status: 403,
@@ -836,7 +862,7 @@ async function handleImageProxy(request, env) {
       }
     });
   }
-  
+
   // User-Agent 黑名单
   const userAgent = request.headers.get('User-Agent') || '';
   const blockedBots = ['GPTBot', 'ChatGPT', 'CCBot', 'anthropic-ai', 'Claude-Web', 'Bytespider', 'FacebookBot'];
@@ -849,7 +875,7 @@ async function handleImageProxy(request, env) {
       }
     });
   }
-  
+
   // 使用签名请求 S3
   const config = {
     endpoint: env.S3_ENDPOINT,
@@ -859,10 +885,10 @@ async function handleImageProxy(request, env) {
     secretKey: env.S3_SECRET_KEY,
     publicUrl: `https://${env.S3_BUCKET}.s3.bitiful.net`
   };
-  
+
   try {
     const s3Response = await s3GetWithParams(config, objectKey, url.search);
-    
+
     if (!s3Response.ok) {
       return new Response('Image Not Found', {
         status: s3Response.status,
@@ -872,11 +898,11 @@ async function handleImageProxy(request, env) {
         }
       });
     }
-    
+
     // 获取图片数据
     const imageData = await s3Response.arrayBuffer();
     const contentType = s3Response.headers.get('Content-Type') || 'image/jpeg';
-    
+
     // 返回图片，带缓存控制
     return new Response(imageData, {
       status: 200,
@@ -904,7 +930,7 @@ async function s3GetWithParams(config, key, queryString) {
   const host = `${config.bucket}.s3.bitiful.net`;
   const headers = { Host: host, 'x-amz-content-sha256': 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' };
   const encodedPath = encodeS3Path(key);
-  
+
   // 解析查询参数
   const queryParams = {};
   if (queryString) {
@@ -913,9 +939,9 @@ async function s3GetWithParams(config, key, queryString) {
       queryParams[k] = v;
     }
   }
-  
+
   const sig = await createSignature(config, 'GET', `/${encodedPath}`, queryParams, headers, headers['x-amz-content-sha256']);
-  
+
   // 构建带查询参数的 URL
   let fullUrl = `https://${host}/${encodedPath}`;
   if (Object.keys(queryParams).length > 0) {
@@ -924,16 +950,16 @@ async function s3GetWithParams(config, key, queryString) {
       .join('&');
     fullUrl += `?${qs}`;
   }
-  
+
   const res = await fetch(fullUrl, {
-    headers: { 
-      Authorization: sig.authorization, 
-      'x-amz-date': sig.amzDate, 
+    headers: {
+      Authorization: sig.authorization,
+      'x-amz-date': sig.amzDate,
       'x-amz-content-sha256': headers['x-amz-content-sha256'],
       'Host': host
     }
   });
-  
+
   return res;
 }
 
@@ -945,14 +971,14 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const pathname = url.pathname;
-    
+
     // ============================================
     // 图片代理路由（img.lingshichat.top/img/gallery/*）
     // ============================================
     if (pathname.startsWith('/img/gallery/')) {
       return handleImageProxy(request, env);
     }
-    
+
     // ============================================
     // API 路由（原有逻辑）
     // ============================================
@@ -1257,6 +1283,19 @@ export default {
           return json(429, { code: 429, message: '签名请求过于频繁，请稍后再试' });
         }
 
+        // 普通用户每日上传限额检查（管理员不受限）
+        if (authResult.session.role !== 'admin') {
+          const dailyUsed = await getDailyUploadCount(env, authResult.session.userId);
+          if (dailyUsed >= DAILY_UPLOAD_LIMIT) {
+            return json(429, {
+              code: 429,
+              message: `今日上传已达上限（${DAILY_UPLOAD_LIMIT} 张），请明天再试`,
+              dailyUsed,
+              dailyLimit: DAILY_UPLOAD_LIMIT
+            });
+          }
+        }
+
         let key = url.searchParams.get('key');
         let contentType = url.searchParams.get('type') || 'image/jpeg';
         let sizeBytes;
@@ -1298,6 +1337,26 @@ export default {
         }
 
         return json(200, { code: 200, key: scopedKey, ...upload });
+      }
+
+      // 查询当前用户今日上传额度
+      if (action === 'uploadQuota') {
+        const authResult = await requireSession(authHeader, env, ['user', 'admin']);
+        if (!authResult.ok) {
+          return json(authResult.code, { code: authResult.code, message: authResult.message });
+        }
+
+        if (authResult.session.role === 'admin') {
+          return json(200, { code: 200, dailyUsed: 0, dailyLimit: -1, isUnlimited: true });
+        }
+
+        const dailyUsed = await getDailyUploadCount(env, authResult.session.userId);
+        return json(200, {
+          code: 200,
+          dailyUsed,
+          dailyLimit: DAILY_UPLOAD_LIMIT,
+          isUnlimited: false
+        });
       }
 
       if (action === 'signDelete') {
