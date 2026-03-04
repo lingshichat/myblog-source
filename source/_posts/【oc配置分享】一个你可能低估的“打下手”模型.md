@@ -1,11 +1,11 @@
 ---
 title: 【oc配置分享】一个你可能低估的“打下手”模型
 date: 2026-03-04 22:26:00
-updated: 2026-03-04 23:54:00
+updated: 2026-03-05 00:05:00
 tags: []
 categories: []
 ---
->本文首发于Linux.do和我的blog~[泠诗的小窝](https://lingshichat.top)
+>本文首发于Linux.do和我的blog~[泠诗的小窝](https://lingshichat.top)，严禁转载
 
 # 引言
 大家好呀，这是我来L站的第一个帖子~
